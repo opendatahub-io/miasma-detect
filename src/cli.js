@@ -29,8 +29,13 @@ Options:
   --categories <list>    Comma-separated: campaign-ioc,supply-chain,prompt-injection,package
   --ioc-pack <file>      Load an extra IOC pack (JSON). Repeatable. Lets you add
                          a new campaign's packages/hashes/markers without code changes.
+  --exclude <pattern>    Skip paths matching a gitignore-style pattern (relative to
+                         each scanned directory). Repeatable. A .miasmaignore file
+                         at the scan root is honored automatically.
   --json                 Machine-readable JSON output
   --quiet                Only print on detection
+  --                     Treat all remaining arguments as paths (for paths
+                         beginning with '-')
   -h, --help             Show help
 
 Exit codes:
@@ -77,6 +82,16 @@ function parseArgs(argv) {
         args.iocPacks.push(p);
         break;
       }
+      case '--exclude': {
+        const p = argv[++i];
+        if (!p) fail('--exclude requires a pattern');
+        (args.options.exclude = args.options.exclude || []).push(p);
+        break;
+      }
+      case '--':
+        args.paths.push(...argv.slice(i + 1));
+        i = argv.length;
+        break;
       default:
         if (a.startsWith('-')) fail(`unknown option: ${a}`);
         args.paths.push(a);

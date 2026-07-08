@@ -38,6 +38,14 @@ miasma-detect --min-severity high --categories campaign-ioc,supply-chain,package
 
 # Add a new campaign at runtime — no code change
 miasma-detect --ioc-pack ./packs/new-wave.json --stdin
+
+# Audit whole repos: exclude paths, or use `--` for dash-prefixed paths.
+# A .miasmaignore file (gitignore-style patterns) at the scan root is
+# honored automatically. For tree audits, --categories package,campaign-ioc
+# keeps the technique heuristics (curl|bash in READMEs, sudoers templates
+# in infra code…) from drowning the signal.
+miasma-detect --exclude 'vendor/' --exclude '**/testdata/' ~/git/myrepo
+miasma-detect --categories package,campaign-ioc -- -weird-dir-name
 ```
 
 Exit codes: `0` clean, `1` **blocked — stop processing**, `2` usage error.

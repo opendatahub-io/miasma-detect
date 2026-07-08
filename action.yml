@@ -22,6 +22,10 @@ inputs:
     description: 'Newline- or comma-separated paths to extra IOC pack JSON files (adds new campaigns without code changes)'
     required: false
     default: ''
+  exclude:
+    description: 'Newline-separated gitignore-style patterns to skip (a .miasmaignore file at the repo root is also honored for directory scans)'
+    required: false
+    default: ''
   scan-changed-files:
     description: 'Also scan files changed in the PR/push (requires actions/checkout with fetch-depth: 0)'
     required: false

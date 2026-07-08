@@ -325,6 +325,42 @@ test('CLI --ioc-pack loads an external pack and blocks on it', () => {
   assert.strictEqual(code, 1);
 });
 
+test('CLI "--" separator allows paths beginning with a dash', () => {
+  const cli = path.join(__dirname, '..', 'src', 'cli.js');
+  const dashDir = path.join(tmp, '-dashdir');
+  fs.mkdirSync(dashDir, { recursive: true });
+  fs.writeFileSync(path.join(dashDir, 'a.txt'), 'benign content here');
+  const out = execFileSync(process.execPath, [cli, '--quiet', '--', dashDir], { cwd: tmp });
+  assert(out !== null);
+});
+
+test('scanDir --exclude patterns skip matching paths', () => {
+  const root = path.join(tmp, 'excl');
+  fs.mkdirSync(path.join(root, 'vendor'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'vendor', 'bad.txt'), 'Miasma: The Spreading Blight');
+  fs.writeFileSync(path.join(root, 'src', 'bad.txt'), 'Miasma: The Spreading Blight');
+  const { scanDir } = require('../index');
+  const all = scanDir(root);
+  assert.strictEqual(all.filter((f) => f.ruleId === 'MIASMA-MARKER').length, 2);
+  const filtered = scanDir(root, { exclude: ['vendor/'] });
+  const hits = filtered.filter((f) => f.ruleId === 'MIASMA-MARKER');
+  assert.strictEqual(hits.length, 1);
+  assert(hits[0].source.includes('src'));
+});
+
+test('scanDir honors .miasmaignore at scan root', () => {
+  const root = path.join(tmp, 'ignorefile');
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'iocs.md'), 'marker: Miasma: The Spreading Blight');
+  fs.writeFileSync(path.join(root, '.miasmaignore'), '# ignore documented IOCs\ndocs/\n');
+  const { scanDir } = require('../index');
+  const f = scanDir(root);
+  assert(!f.some((x) => x.ruleId === 'MIASMA-MARKER'), `unexpected: ${ids(f)}`);
+  const noIgnore = scanDir(root, { useIgnoreFile: false });
+  assert(noIgnore.some((x) => x.ruleId === 'MIASMA-MARKER'));
+});
+
 test('hook blocks (exit 2) on malicious tool_response', () => {
   const hook = path.join(__dirname, '..', 'hooks', 'claude-code-hook.js');
   let code = 0;

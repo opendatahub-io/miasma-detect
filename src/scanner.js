@@ -12,7 +12,11 @@ const DEFAULT_OPTIONS = {
   categories: null,             // null = all; or array of: campaign-ioc, supply-chain, prompt-injection, package
   maxFileSize: 10 * 1024 * 1024,
   giantLineThreshold: 500000,   // single-line JS length that looks like a packed dropper
-  ignoreDirs: new Set(['node_modules', '.git', 'dist', 'build', 'coverage']),
+  ignoreDirs: new Set([
+    'node_modules', '.git', 'dist', 'build', 'coverage', // JS
+    'target',                                            // Rust/Java build output
+    '.venv', 'venv', '__pycache__', '.tox',              // Python
+  ]),
   extraPacks: null,             // additional IOC packs (from --ioc-pack)
 };
 
@@ -240,25 +244,84 @@ function scanFile(filePath, options) {
   return findings;
 }
 
-/** Recursively scan a directory. */
+// --- Exclusion patterns (--exclude / .miasmaignore) -------------------------
+// Gitignore-flavored subset: `*` matches within a path segment, `**` across
+// segments, `?` a single character. A pattern containing `/` is anchored to
+// the scan root; one without matches any path segment (basename). A trailing
+// `/` restricts the pattern to directories. Lines starting with # are comments.
+
+function globToRegExp(glob) {
+  let p = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  p = p.replace(/\*\*/g, '\x00').replace(/\*/g, '[^/]*').replace(/\x00/g, '.*').replace(/\?/g, '[^/]');
+  return new RegExp('^' + p + '$');
+}
+
+function compileExcludes(patterns) {
+  return (patterns || [])
+    .map((raw) => {
+      let pat = String(raw).trim();
+      if (!pat || pat.startsWith('#')) return null;
+      const dirOnly = pat.endsWith('/');
+      if (dirOnly) pat = pat.slice(0, -1);
+      const anchored = pat.includes('/');
+      return { re: globToRegExp(pat), anchored, dirOnly, raw: String(raw).trim() };
+    })
+    .filter(Boolean);
+}
+
+function isExcluded(relPath, isDir, compiled) {
+  if (!compiled || compiled.length === 0) return false;
+  const p = relPath.split(path.sep).join('/');
+  const base = p.slice(p.lastIndexOf('/') + 1);
+  for (const c of compiled) {
+    if (c.dirOnly && !isDir) continue;
+    if (c.anchored ? c.re.test(p) : c.re.test(base) || c.re.test(p)) return true;
+  }
+  return false;
+}
+
+/**
+ * Recursively scan a directory. Honors opts.exclude (array of gitignore-style
+ * patterns) and, unless opts.useIgnoreFile === false, a .miasmaignore file at
+ * the scan root (one pattern per line, # comments).
+ */
 function scanDir(dirPath, options) {
   const opts = Object.assign({}, DEFAULT_OPTIONS, options);
+  let patterns = Array.isArray(opts.exclude) ? opts.exclude.slice() : [];
+  if (opts.useIgnoreFile !== false) {
+    try {
+      patterns = patterns.concat(
+        fs.readFileSync(path.join(dirPath, '.miasmaignore'), 'utf8').split('\n')
+      );
+    } catch {
+      /* no ignore file */
+    }
+  }
+  const compiled = compileExcludes(patterns);
   const findings = [];
+  walkDir(dirPath, '', compiled, opts, findings);
+  return findings;
+}
+
+function walkDir(dir, rel, compiled, opts, findings) {
   let entries;
   try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return findings;
+    return;
   }
   for (const e of entries) {
-    const full = path.join(dirPath, e.name);
+    const full = path.join(dir, e.name);
+    const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
-      if (!opts.ignoreDirs.has(e.name)) findings.push(...scanDir(full, opts));
+      if (opts.ignoreDirs.has(e.name)) continue;
+      if (isExcluded(childRel, true, compiled)) continue;
+      walkDir(full, childRel, compiled, opts, findings);
     } else if (e.isFile()) {
+      if (isExcluded(childRel, false, compiled)) continue;
       findings.push(...scanFile(full, opts));
     }
   }
-  return findings;
 }
 
 // Filenames that, when added/modified in a commit, indicate worm propagation
@@ -356,6 +419,8 @@ module.exports = {
   scanGithubEvent,
   summarize,
   loadPacks,
+  compileExcludes,
+  isExcluded,
   SEVERITY_ORDER,
   DEFAULT_OPTIONS,
 };

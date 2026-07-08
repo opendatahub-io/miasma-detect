@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { scanGithubEvent, scanFile, summarize, loadPacks } = require('./scanner');
+const { scanGithubEvent, scanFile, summarize, loadPacks, compileExcludes, isExcluded } = require('./scanner');
 
 function input(name, fallback) {
   const v = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`];
@@ -57,6 +57,10 @@ function main() {
   const packPaths = input('ioc-packs', '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
   if (packPaths.length) options.extraPacks = loadPacks(packPaths);
 
+  const excludePatterns = input('exclude', '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (excludePatterns.length) options.exclude = excludePatterns;
+  const compiledExcludes = compileExcludes(excludePatterns);
+
   const findings = [];
 
   // 1. Event payload (PR body/title, issue, comments, commits…)
@@ -69,6 +73,7 @@ function main() {
   // 2. Changed files
   if (input('scan-changed-files', 'true') === 'true') {
     for (const f of changedFiles()) {
+      if (isExcluded(f, false, compiledExcludes)) continue;
       if (fs.existsSync(f)) findings.push(...scanFile(f, options));
     }
   }
