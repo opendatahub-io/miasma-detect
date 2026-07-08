@@ -1,7 +1,7 @@
 {
   "name": "miasma-detect",
   "version": "1.0.0",
-  "description": "Detect Miasma npm supply-chain campaign IOCs, generic supply-chain attack heuristics, and prompt-injection payloads in GitHub PRs/issues, files, and diffs. Fails fast so coding agents stop processing.",
+  "description": "Detect Shai-Hulud/Miasma-family npm supply-chain worms via campaign IOCs, generic family-technique heuristics, and prompt-injection patterns in GitHub PRs/issues, files, and diffs. Fails fast so coding agents stop processing.",
   "license": "MIT",
   "author": "Ann Marie Fred <afred@redhat.com>",
   "main": "index.js",
@@ -26,9 +26,11 @@
     "security",
     "supply-chain",
     "miasma",
+    "shai-hulud",
     "npm-audit",
     "prompt-injection",
     "ioc",
-    "malware-detection"
+    "malware-detection",
+    "worm"
   ]
 }

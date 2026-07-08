@@ -15,7 +15,11 @@ inputs:
     required: false
     default: 'medium'
   categories:
-    description: 'Comma-separated rule categories to apply (default: all). Options: miasma-ioc,supply-chain,prompt-injection,package'
+    description: 'Comma-separated rule categories to apply (default: all). Options: campaign-ioc,supply-chain,prompt-injection,package'
+    required: false
+    default: ''
+  ioc-packs:
+    description: 'Newline- or comma-separated paths to extra IOC pack JSON files (adds new campaigns without code changes)'
     required: false
     default: ''
   scan-changed-files:

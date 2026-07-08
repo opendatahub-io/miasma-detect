@@ -8,11 +8,15 @@ const {
   scanDir,
   scanGithubEvent,
   summarize,
+  loadPacks,
   SEVERITY_ORDER,
 } = require('./scanner');
+const { campaigns } = require('./rules');
 
-const USAGE = `miasma-detect — scan for Miasma supply-chain IOCs, generic supply-chain
-attack heuristics, and prompt-injection payloads.
+const USAGE = `miasma-detect — detect Shai-Hulud/Miasma-family supply-chain worms,
+generic supply-chain attack techniques, and prompt-injection payloads.
+
+Built-in campaign packs: ${campaigns.join(', ')}
 
 Usage:
   miasma-detect [options] <path>...        Scan files and/or directories
@@ -22,7 +26,9 @@ Usage:
 
 Options:
   --min-severity <low|medium|high|critical>   Failure threshold (default: medium)
-  --categories <list>    Comma-separated: miasma-ioc,supply-chain,prompt-injection,package
+  --categories <list>    Comma-separated: campaign-ioc,supply-chain,prompt-injection,package
+  --ioc-pack <file>      Load an extra IOC pack (JSON). Repeatable. Lets you add
+                         a new campaign's packages/hashes/markers without code changes.
   --json                 Machine-readable JSON output
   --quiet                Only print on detection
   -h, --help             Show help
@@ -34,7 +40,7 @@ Exit codes:
 `;
 
 function parseArgs(argv) {
-  const args = { paths: [], stdin: false, event: null, json: false, quiet: false, options: {} };
+  const args = { paths: [], stdin: false, event: null, json: false, quiet: false, iocPacks: [], options: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -65,6 +71,12 @@ function parseArgs(argv) {
       case '--categories':
         args.options.categories = (argv[++i] || '').split(',').map((s) => s.trim()).filter(Boolean);
         break;
+      case '--ioc-pack': {
+        const p = argv[++i];
+        if (!p) fail('--ioc-pack requires a file path');
+        args.iocPacks.push(p);
+        break;
+      }
       default:
         if (a.startsWith('-')) fail(`unknown option: ${a}`);
         args.paths.push(a);
@@ -121,6 +133,14 @@ function printHuman(summary, quiet) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const findings = [];
+
+  if (args.iocPacks.length) {
+    try {
+      args.options.extraPacks = loadPacks(args.iocPacks);
+    } catch (e) {
+      fail(`cannot load IOC pack: ${e.message}`);
+    }
+  }
 
   if (!args.stdin && !args.event && args.paths.length === 0) {
     if (process.env.GITHUB_EVENT_PATH && fs.existsSync(process.env.GITHUB_EVENT_PATH)) {

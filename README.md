@@ -1,16 +1,18 @@
 # miasma-detect
 
-Fail-fast scanner for the **Miasma** npm supply-chain campaign ([Microsoft Security Blog, June 2, 2026](https://www.microsoft.com/en-us/security/blog/2026/06/02/preinstall-persistence-inside-red-hat-npm-miasma-credential-stealing-campaign/)), plus generic supply-chain attack heuristics and prompt-injection patterns.
+Fail-fast scanner for the **Shai-Hulud / Miasma family** of self-propagating npm supply-chain worms — the lineage behind the [Shai-Hulud](https://unit42.paloaltonetworks.com/npm-supply-chain-attack/) waves (Sept 2025 →), [Sha1-Hulud 2.0 "The Second Coming"](https://www.wiz.io/blog/shai-hulud-2-0-ongoing-supply-chain-attack) (Nov 2025), and the [Miasma](https://www.microsoft.com/en-us/security/blog/2026/06/02/preinstall-persistence-inside-red-hat-npm-miasma-credential-stealing-campaign/) / [node-gyp "Phantom Gyp"](https://snyk.io/blog/node-gyp-supply-chain-compromise-self-propagating-npm-worm-binding-gyp/) waves (June 2026) — plus generic supply-chain attack heuristics and prompt-injection patterns.
 
 Point it at a GitHub PR/issue/comment, a diff, a file tree, or any text blob. If it matches an indicator, it exits non-zero immediately — so CI fails and coding agents stop before processing malicious content.
+
+**Built to catch the next wave, not just the last one.** Exact indicators (compromised versions, hashes, marker strings) live in swappable [campaign packs](src/campaigns/); the bulk of the rules target the *techniques* the whole family reuses across waves, so a future campaign with a different name and different actors still trips them. Add a new campaign as a data drop (`--ioc-pack`), not a code change.
 
 Zero dependencies. Node ≥ 18. One codebase, four entry points: CLI, library, GitHub Action, Claude Code hook. For the detection architecture, see [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## What it detects
 
-**Confirmed Miasma IOCs (critical/high)** — all 32 compromised `@redhat-cloud-services` package versions (in package.json, lockfiles, or diff text), the six known dropper SHA256 hashes (by file hash and by mention), the "Miasma: The Spreading Blight" campaign marker, the destructive honeytoken string, `.github/setup.js` worm commits, the `chore: update dependencies [skip ci]` worm commit signature, exfil drop paths (`results/<timestamp>-<n>.json`), and `bun run .claude/` second-stage execution.
+**Confirmed campaign IOCs (critical/high), from the built-in packs** — known-compromised package versions across the `@redhat-cloud-services`, `@vapi-ai/server-sdk`, `autotel`, `ai-sdk-ollama` and other affected names (in package.json, lockfiles, or diff text); known dropper SHA256 hashes; campaign markers ("Miasma: The Spreading Blight", "Sha1-Hulud: The Second Coming"); the destructive honeytoken; worm commit signatures; and known payload/workflow filenames (`setup_bun.js`, `bun_environment.js`, `router_init.js`, `shai-hulud-workflow.yml`).
 
-**Generic supply-chain heuristics** — lifecycle hooks (`preinstall`/`install`/`postinstall`) that execute scripts, Bun runtime downloads, `eval` + char-code obfuscation, very large single-line JS files (the dropper was a 4.29 MB one-liner), `NOPASSWD:ALL` sudoers injection, runner memory scraping (`isSecret":true`), cloud metadata endpoint access, credential-file sweeps, npm token enumeration, `/etc/hosts` tampering, and `rm -rf ~/`.
+**Family techniques (generic — the part that catches future variants)** — install/build-time execution via lifecycle hooks, `binding.gyp` `<!(...)` command expansion ("Phantom Gyp"), and RubyGems `extconf.rb`; Bun runtime downloads and `curl|bash`; `eval`+char-code and inline AES-GCM obfuscation; multi-MB single-line JS droppers; `NOPASSWD:ALL` and `docker --privileged -v /:/host` breakout; runner memory scraping (`isSecret":true`); IMDS metadata access, credential-file sweeps, trufflehog abuse, npm token and maintainer enumeration; workflow command-injection, rogue self-hosted runner registration, AI-agent/editor persistence hooks (`.claude/`, `.cursor/rules/`, `.vscode/tasks.json`), `.github/setup.js` self-injection, forged Sigstore/SLSA provenance, `results/…json` dead-drops, git-commit-pinned deps, and `rm -rf ~/`.
 
 **Prompt injection** — instruction overrides ("ignore previous instructions"), directives addressed to AI agents, hidden HTML-comment commands, concealment instructions ("don't tell the user"), invisible/bidi Unicode, and system-prompt probes.
 
@@ -32,10 +34,31 @@ git diff origin/main...HEAD | miasma-detect --stdin
 miasma-detect --event event.json
 
 # Options
-miasma-detect --min-severity high --categories miasma-ioc,package --json --quiet <path>
+miasma-detect --min-severity high --categories campaign-ioc,supply-chain,package --json --quiet <path>
+
+# Add a new campaign at runtime — no code change
+miasma-detect --ioc-pack ./packs/new-wave.json --stdin
 ```
 
 Exit codes: `0` clean, `1` **blocked — stop processing**, `2` usage error.
+
+## Covering a new campaign
+
+Perishable indicators live in [`src/campaigns/`](src/campaigns/); the generic technique rules in `src/rules.js` are what catch unnamed future variants. To add a wave without touching code, write a JSON pack and pass it via `--ioc-pack` (CLI), `ioc-packs:` (Action input), or `options.extraPacks` (library):
+
+```json
+{
+  "name": "next-wave",
+  "packages": { "some-pkg": ["1.2.3"] },
+  "hashes": ["<sha256>"],
+  "rules": [
+    { "id": "NEXTWAVE-MARKER", "severity": "critical", "category": "campaign-ioc",
+      "description": "new marker string", "pattern": { "source": "the[- ]marker", "flags": "i" } }
+  ]
+}
+```
+
+Built-in packs stay active alongside yours. See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full format and the technique-rule catalog.
 
 ## Library
 

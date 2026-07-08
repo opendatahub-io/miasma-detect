@@ -3,16 +3,27 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { COMPROMISED_PACKAGES, MALICIOUS_SHA256, TEXT_RULES } = require('./rules');
+const rules = require('./rules');
 
 const SEVERITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
 
 const DEFAULT_OPTIONS = {
   minSeverity: 'medium',        // findings below this are reported but don't fail
-  categories: null,             // null = all; or array of: miasma-ioc, supply-chain, prompt-injection, package
+  categories: null,             // null = all; or array of: campaign-ioc, supply-chain, prompt-injection, package
   maxFileSize: 10 * 1024 * 1024,
+  giantLineThreshold: 500000,   // single-line JS length that looks like a packed dropper
   ignoreDirs: new Set(['node_modules', '.git', 'dist', 'build', 'coverage']),
+  extraPacks: null,             // additional IOC packs (from --ioc-pack)
 };
+
+// Resolve the active ruleset. If a scan supplies extraPacks, rebuild; else
+// use the cached default (generic rules + built-in campaign packs).
+function getRuleset(opts) {
+  if (opts && opts.extraPacks && opts.extraPacks.length) {
+    return rules.buildRules(opts.extraPacks);
+  }
+  return rules; // module already exposes COMPROMISED_PACKAGES / MALICIOUS_SHA256 / TEXT_RULES
+}
 
 function makeFinding(rule, source, extra) {
   return Object.assign(
@@ -33,13 +44,18 @@ function excerpt(text, index, len) {
   return text.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** Scan a blob of text (PR body, issue text, diff, file content). */
 function scanText(text, source, options) {
   const opts = Object.assign({}, DEFAULT_OPTIONS, options);
+  const rs = getRuleset(opts);
   const findings = [];
   if (typeof text !== 'string' || text.length === 0) return findings;
 
-  for (const rule of TEXT_RULES) {
+  for (const rule of rs.TEXT_RULES) {
     if (opts.categories && !opts.categories.includes(rule.category)) continue;
     const m = rule.pattern.exec(text);
     if (m) {
@@ -47,27 +63,30 @@ function scanText(text, source, options) {
         makeFinding(rule, source, {
           match: m[0].slice(0, 200),
           excerpt: excerpt(text, m.index, m[0].length),
+          campaign: rule.campaign,
         })
       );
     }
   }
 
-  // Compromised package references anywhere in text (diffs, lockfiles, manifests)
-  for (const [pkg, versions] of Object.entries(COMPROMISED_PACKAGES)) {
-    if (!text.includes(pkg)) continue;
-    for (const v of versions) {
-      const re = new RegExp(
-        escapeRegExp(pkg) + '["\'@\\s:]{0,4}[\\^~]?' + escapeRegExp(v) + '(?![\\d.])'
-      );
-      if (re.test(text)) {
-        findings.push({
-          ruleId: 'MIASMA-COMPROMISED-PKG',
-          severity: 'critical',
-          category: 'package',
-          description: `Reference to compromised package ${pkg}@${v} (Miasma campaign)`,
-          source,
-          match: `${pkg}@${v}`,
-        });
+  // Known-compromised package references anywhere in text (diffs, lockfiles, manifests)
+  if (!opts.categories || opts.categories.includes('package')) {
+    for (const [pkg, versions] of Object.entries(rs.COMPROMISED_PACKAGES)) {
+      if (!text.includes(pkg)) continue;
+      for (const v of versions) {
+        const re = new RegExp(
+          escapeRegExp(pkg) + '["\'@\\s:]{0,4}[\\^~]?' + escapeRegExp(v) + '(?![\\d.])'
+        );
+        if (re.test(text)) {
+          findings.push({
+            ruleId: 'KNOWN-COMPROMISED-PKG',
+            severity: 'critical',
+            category: 'package',
+            description: `Reference to known-compromised package ${pkg}@${v} (Shai-Hulud/Miasma family)`,
+            source,
+            match: `${pkg}@${v}`,
+          });
+        }
       }
     }
   }
@@ -77,6 +96,8 @@ function scanText(text, source, options) {
 
 /** Scan a parsed package.json object for compromised deps + hostile lifecycle scripts. */
 function scanPackageJson(pkgJson, source, options) {
+  const opts = Object.assign({}, DEFAULT_OPTIONS, options);
+  const rs = getRuleset(opts);
   const findings = [];
   const depFields = [
     'dependencies',
@@ -90,24 +111,38 @@ function scanPackageJson(pkgJson, source, options) {
     const deps = pkgJson[field];
     if (!deps || typeof deps !== 'object') continue;
     for (const [name, range] of Object.entries(deps)) {
-      const versions = COMPROMISED_PACKAGES[name];
+      const raw = String(range);
+      // Dependency pinned to a raw git commit / attacker fork (payload staging).
+      // Covers URL forms (git+https, git@) and npm shorthands (github:, gitlab:,
+      // bitbucket:, or bare owner/repo) that reference a commit SHA after '#'.
+      if (/(?:(?:git\+)?(?:https?:\/\/|git@)|(?:github|gitlab|bitbucket):|^[\w.-]+\/[\w.-]+#)[^#\s]*#[0-9a-f]{7,40}\b/i.test(raw)) {
+        findings.push({
+          ruleId: 'SC-GIT-COMMIT-DEP',
+          severity: 'medium',
+          category: 'supply-chain',
+          description: `${field} pins ${name} to a raw git commit (${raw}) — technique used to stage worm payloads; verify the source`,
+          source,
+          match: `${name}: ${raw}`,
+        });
+      }
+      const versions = rs.COMPROMISED_PACKAGES[name];
       if (!versions) continue;
-      const cleaned = String(range).replace(/^[\^~>=<\s]+/, '');
+      const cleaned = raw.replace(/^[\^~>=<\s]+/, '');
       if (versions.includes(cleaned)) {
         findings.push({
-          ruleId: 'MIASMA-COMPROMISED-PKG',
+          ruleId: 'KNOWN-COMPROMISED-PKG',
           severity: 'critical',
           category: 'package',
-          description: `${field} pins compromised package ${name}@${range} (Miasma campaign)`,
+          description: `${field} pins known-compromised package ${name}@${range} (Shai-Hulud/Miasma family)`,
           source,
           match: `${name}@${range}`,
         });
       } else {
         findings.push({
-          ruleId: 'MIASMA-SCOPE-WATCH',
+          ruleId: 'COMPROMISED-SCOPE-WATCH',
           severity: 'low',
           category: 'package',
-          description: `Dependency on ${name} (@redhat-cloud-services scope was compromised in the Miasma campaign; version ${range} not in known-bad list — verify and pin)`,
+          description: `Dependency on ${name}, which had other versions compromised in the Shai-Hulud/Miasma family; version ${range} is not in the known-bad list — verify and pin`,
           source,
           match: `${name}@${range}`,
         });
@@ -116,26 +151,40 @@ function scanPackageJson(pkgJson, source, options) {
   }
 
   const scripts = pkgJson.scripts || {};
-  for (const hook of ['preinstall', 'install', 'postinstall']) {
+  for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish']) {
     const cmd = scripts[hook];
     if (!cmd) continue;
-    if (/\b(node|sh|bash|curl|wget|bun|python)\b/.test(cmd)) {
+    if (/\b(node|sh|bash|curl|wget|bun|python3?|deno)\b/.test(cmd)) {
       findings.push({
         ruleId: 'SC-LIFECYCLE-HOOK',
         severity: 'high',
         category: 'supply-chain',
-        description: `npm ${hook} hook executes a script ("${cmd}") — primary Miasma delivery vector; verify before installing`,
+        description: `npm ${hook} hook executes a script ("${cmd}") — the family's classic install-time execution vector; verify before installing`,
         source,
         match: `"${hook}": "${cmd}"`,
       });
     }
   }
+
+  // gypfile:true declares native build → node-gyp will run at install.
+  // Not malicious by itself, but worth surfacing alongside a binding.gyp check.
+  if (pkgJson.gypfile === true) {
+    findings.push({
+      ruleId: 'SC-GYPFILE-DECLARED',
+      severity: 'low',
+      category: 'supply-chain',
+      description: 'package.json declares "gypfile": true — node-gyp runs at install; ensure the binding.gyp is legitimate (see "Phantom Gyp" technique)',
+      source,
+      match: '"gypfile": true',
+    });
+  }
   return findings;
 }
 
-/** Scan a file: hash check + text rules + package.json awareness. */
+/** Scan a file: hash check + filename technique checks + text rules + manifest awareness. */
 function scanFile(filePath, options) {
   const opts = Object.assign({}, DEFAULT_OPTIONS, options);
+  const rs = getRuleset(opts);
   const findings = [];
   let buf;
   try {
@@ -147,12 +196,12 @@ function scanFile(filePath, options) {
   }
 
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-  if (MALICIOUS_SHA256.includes(sha256)) {
+  if (rs.MALICIOUS_SHA256.includes(sha256)) {
     findings.push({
-      ruleId: 'MIASMA-FILE-HASH',
+      ruleId: 'KNOWN-MALICIOUS-HASH',
       severity: 'critical',
-      category: 'miasma-ioc',
-      description: 'File SHA256 matches a known Miasma dropper',
+      category: 'campaign-ioc',
+      description: 'File SHA256 matches a known dropper from the Shai-Hulud/Miasma family',
       source: filePath,
       match: sha256,
     });
@@ -171,16 +220,16 @@ function scanFile(filePath, options) {
     }
   }
 
-  // Giant single-line JS heuristic (Miasma dropper was a 4.29 MB one-liner)
+  // Giant single-line JS heuristic (family droppers are multi-MB one-liners).
   if (/\.(js|cjs|mjs)$/.test(base)) {
-    const lines = text.split('\n');
-    const maxLine = Math.max(...lines.map((l) => l.length));
-    if (maxLine > 500000) {
+    let maxLine = 0;
+    for (const l of text.split('\n')) if (l.length > maxLine) maxLine = l.length;
+    if (maxLine > opts.giantLineThreshold) {
       findings.push({
         ruleId: 'SC-GIANT-ONELINER',
         severity: 'high',
         category: 'supply-chain',
-        description: `Suspicious very large single-line JavaScript (${maxLine} chars) — matches Miasma dropper shape`,
+        description: `Suspicious very large single-line JavaScript (${maxLine} chars) — matches the family's packed-dropper shape`,
         source: filePath,
         match: `${maxLine}-char line`,
       });
@@ -212,9 +261,21 @@ function scanDir(dirPath, options) {
   return findings;
 }
 
+// Filenames that, when added/modified in a commit, indicate worm propagation
+// or persistence regardless of campaign name.
+const SUSPICIOUS_COMMIT_FILES = [
+  { re: /\.github[\/\\]setup\.js$/i, id: 'SC-SETUP-JS-WORM', desc: '.github/setup.js (worm self-injection bootstrap)' },
+  { re: /\.github[\/\\]workflows[\/\\].*\.ya?ml$/i, id: 'SC-WORKFLOW-ADDED', desc: 'a GitHub Actions workflow (verify it is not an injected backdoor)', sev: 'medium' },
+  { re: /(?:^|[\/\\])(?:setup_bun|bun_environment|router_init)\.js$/i, id: 'SC-FAMILY-PAYLOAD-FILE', desc: 'a known family payload filename (setup_bun.js / bun_environment.js / router_init.js)' },
+  { re: /(?:^|[\/\\])binding\.gyp$/i, id: 'SC-BINDING-GYP-ADDED', desc: 'binding.gyp (node-gyp build file — verify it contains no "<!(...)" command expansion)', sev: 'medium' },
+  { re: /(?:^|[\/\\])extconf\.rb$/i, id: 'SC-EXTCONF-ADDED', desc: 'extconf.rb (RubyGems build hook — verify it does not fetch/run code)', sev: 'medium' },
+  { re: /\.cursor[\/\\]rules[\/\\]|\.vscode[\/\\]tasks\.json$|\.claude[\/\\]/i, id: 'SC-AGENT-HOOK-ADDED', desc: 'an AI-agent/editor auto-run hook (persistence that survives npm uninstall)' },
+];
+
 /**
  * Scan a GitHub webhook/Actions event payload (pull_request, issues,
- * issue_comment, push, etc.). Extracts all human-authored text surfaces.
+ * issue_comment, push, discussion, etc.). Extracts all human-authored text
+ * surfaces and inspects commit file lists for propagation/persistence files.
  */
 function scanGithubEvent(event, options) {
   const findings = [];
@@ -233,22 +294,25 @@ function scanGithubEvent(event, options) {
   push('discussion.title', event.discussion && event.discussion.title);
   push('discussion.body', event.discussion && event.discussion.body);
   push('repository.description', event.repository && event.repository.description);
+
   if (Array.isArray(event.commits)) {
     event.commits.forEach((c, i) => {
       push(`commits[${i}].message`, c.message);
-      (c.added || []).concat(c.modified || []).forEach((f) => {
-        // Worm plants .github/setup.js via direct commits
-        if (/\.github[\/\\]setup\.js$/i.test(f)) {
-          findings.push({
-            ruleId: 'MIASMA-SETUPJS-WORM',
-            severity: 'critical',
-            category: 'miasma-ioc',
-            description: 'Commit adds/modifies .github/setup.js (Miasma worm propagation path)',
-            source: `commits[${i}].files`,
-            match: f,
-          });
+      const files = (c.added || []).concat(c.modified || []);
+      for (const f of files) {
+        for (const sig of SUSPICIOUS_COMMIT_FILES) {
+          if (sig.re.test(f)) {
+            findings.push({
+              ruleId: sig.id,
+              severity: sig.sev || 'high',
+              category: 'supply-chain',
+              description: `Commit adds/modifies ${sig.desc}`,
+              source: `commits[${i}].files`,
+              match: f,
+            });
+          }
         }
-      });
+      }
     });
   }
 
@@ -256,10 +320,6 @@ function scanGithubEvent(event, options) {
     findings.push(...scanText(value, label, options));
   }
   return findings;
-}
-
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Summarize findings; verdict fails when any finding >= minSeverity. */
@@ -279,6 +339,15 @@ function summarize(findings, options) {
   };
 }
 
+/** Load external IOC packs from JSON file paths (for --ioc-pack). */
+function loadPacks(filePaths) {
+  return (filePaths || []).map((p) => {
+    const pack = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (!pack.name) throw new Error(`IOC pack ${p} is missing a "name"`);
+    return pack;
+  });
+}
+
 module.exports = {
   scanText,
   scanFile,
@@ -286,6 +355,7 @@ module.exports = {
   scanPackageJson,
   scanGithubEvent,
   summarize,
+  loadPacks,
   SEVERITY_ORDER,
   DEFAULT_OPTIONS,
 };

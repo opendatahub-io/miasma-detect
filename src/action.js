@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { scanGithubEvent, scanFile, summarize } = require('./scanner');
+const { scanGithubEvent, scanFile, summarize, loadPacks } = require('./scanner');
 
 function input(name, fallback) {
   const v = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`];
@@ -53,6 +53,9 @@ function main() {
   const options = { minSeverity: input('min-severity', 'medium') };
   const cats = input('categories', '');
   if (cats) options.categories = cats.split(',').map((s) => s.trim()).filter(Boolean);
+
+  const packPaths = input('ioc-packs', '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  if (packPaths.length) options.extraPacks = loadPacks(packPaths);
 
   const findings = [];
 

@@ -1,38 +1,42 @@
 # How miasma-detect works
 
-miasma-detect is layered pattern matching against every surface an attacker can control, with a severity threshold deciding when to throw. This document explains the pipeline, the rule tiers, and the verdict logic. Rule definitions live in [`src/rules.js`](../src/rules.js); the engine lives in [`src/scanner.js`](../src/scanner.js).
+miasma-detect is layered pattern matching against every surface an attacker can control, with a severity threshold deciding when to throw. It is built to catch the whole **Shai-Hulud / Miasma family** of self-propagating npm/registry worms — not just the specific Red Hat compromise — so a future wave with a new name and new actors still trips it. This document explains the architecture, the rule tiers, and the verdict logic.
+
+The perishable, campaign-specific indicators live in swappable packs under [`src/campaigns/`](../src/campaigns/); the durable, technique-level rules live in [`src/rules.js`](../src/rules.js); the engine lives in [`src/scanner.js`](../src/scanner.js).
+
+## Design: generic techniques + pluggable campaign packs
+
+The central idea is separating *what a specific campaign looked like* from *how this class of attack always works*.
+
+A **campaign pack** is a small data file naming the exact compromised package versions, file hashes, and marker strings of one wave. `src/campaigns/miasma.js` covers the Red Hat compromise plus the June-2026 node-gyp ("Phantom Gyp") cluster; `src/campaigns/shai-hulud.js` covers the wider Shai-Hulud lineage (v1, "The Second Coming" 2.0, the TanStack/Mini waves). These are exact IOCs — they expire as npm removes packages, but they give zero-false-positive hits while the campaign is live.
+
+The **generic rules** in `src/rules.js` describe the *techniques* the entire family reuses across waves. This is where the tool's ability to catch the next variant comes from: attackers keep changing package names, hashes, and marker strings, but they keep reusing install-time execution, a Bun-based off-Node stage, runner-memory scraping, GitHub-as-C2 exfiltration, and worm republishing. Those don't change between waves, so the rules that target them keep working.
+
+When a new campaign is reported, you add a pack (a data drop) or pass `--ioc-pack pack.json` at runtime — you rarely touch the engine or the generic rules. `buildRules()` merges the built-in packs, any extra packs, and the generic rules into one active ruleset.
 
 ## The scanning pipeline
 
-Everything funnels into `scanText()`, which runs ~24 regex rules over whatever text it is given — a PR body, an issue comment, a diff, a file's contents. Each rule has an ID, a severity, and a category. When a rule matches, it produces a *finding* containing the rule metadata, the matched text, and surrounding context for triage.
-
-Three specialized scanners sit on top of `scanText()` and add checks that regexes cannot do well:
+Everything funnels into `scanText()`, which runs the merged rule set (~40 rules) over whatever text it is given — a PR body, an issue comment, a diff, a file's contents — plus a lookup of every known-compromised `package@version` from the active packs. Each match produces a *finding* with the rule metadata, matched text, campaign tag, and surrounding context. Four specialized scanners sit on top and add checks regexes can't do well:
 
 ### `scanPackageJson()`
 
-Parses the manifest and walks every dependency field (`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `resolutions`, `overrides`), comparing names and versions against the hardcoded table of 32 compromised `@redhat-cloud-services` package versions from the Microsoft advisory. An exact version match is **critical**. Any *other* version inside that scope gets a **low**-severity "watch" flag, because the entire namespace was compromised and unknown versions deserve verification, not an automatic block.
-
-It also inspects the `preinstall`, `install`, and `postinstall` lifecycle scripts — Miasma's delivery vector — and flags any that invoke an interpreter or downloader (`node`, `sh`, `bash`, `curl`, `wget`, `bun`, `python`).
+Parses the manifest and walks every dependency field (`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `resolutions`, `overrides`), comparing each against the merged compromised-version table. An exact match is **critical**; any *other* version of a package whose scope/name appeared in a campaign gets a **low** "watch" flag (verify, don't auto-block). It flags dependencies pinned to a raw **git commit or fork** (`github:owner/repo#<sha>`, `git+https…#<sha>`) — the technique used to stage the TanStack payload. It inspects `preinstall`/`install`/`postinstall`/`prepare`/`prepublish` scripts for interpreters/downloaders, and surfaces `"gypfile": true` (which makes node-gyp run at install).
 
 ### `scanFile()`
 
-Computes the file's SHA256 and compares it against the six known Miasma dropper hashes. This catches the actual malware file regardless of what it is named or where it sits.
-
-It then applies a shape heuristic: the Miasma dropper was a 4.29 MB *single-line* JavaScript file, so any `.js`/`.cjs`/`.mjs` file containing a line longer than 500,000 characters is flagged even if its content is novel obfuscation no signature covers. Binary files are hash-checked but skipped for text rules; files named `package.json` are routed through `scanPackageJson()` first; everything textual then goes through `scanText()`.
+Computes the file's SHA256 and compares it against the merged hash list, catching the actual malware regardless of name or location. It then applies a shape heuristic: family droppers are multi-MB *single-line* JS files, so any `.js`/`.cjs`/`.mjs` file with a line over 500,000 characters is flagged even if its content is novel obfuscation no signature covers. Binary files are hash-checked but skipped for text rules; `package.json` is routed through `scanPackageJson()`; everything textual then goes through `scanText()`.
 
 ### `scanGithubEvent()`
 
-Knows the GitHub webhook/Actions payload structure. It extracts every human-authored surface — PR title and body, issue title and body, comment bodies, review bodies, discussion text, commit messages, repository description, branch names — and runs each through `scanText()` with the surface name attached as the finding source.
+Knows the GitHub webhook/Actions payload structure. It extracts every human-authored surface — PR/issue title and body, comment and review bodies, discussion text, commit messages, repository description, branch names — and scans each. It also inspects commit **file lists** for propagation/persistence filenames regardless of campaign: `.github/setup.js`, injected workflows, `setup_bun.js`/`bun_environment.js`/`router_init.js`, `binding.gyp`, `extconf.rb`, and AI-agent/editor hooks (`.claude/`, `.cursor/rules/`, `.vscode/tasks.json`).
 
-It also checks commit file lists directly for `.github/setup.js`, the path Miasma's worm uses to inject itself into victim repositories via the Git Data API.
+## Rule tiers, decreasing confidence
 
-## Three rule tiers, decreasing confidence
+**Tier 1 — exact IOCs (from packs; critical/high).** Campaign markers ("Miasma: The Spreading Blight", "Sha1-Hulud: The Second Coming"), destructive honeytoken strings, dropper hashes, the compromised `package@version` table, the worm commit signature, and known payload/workflow filenames. These essentially cannot false-positive, so they block immediately — but they're the part that expires.
 
-**Tier 1 — exact IOCs (critical/high).** The campaign marker ("Miasma: The Spreading Blight"), the destructive honeytoken string, the six dropper hashes, the 32 compromised package versions, the worm commit signature (`chore: update dependencies [skip ci]`), exfiltration drop paths (`results/<timestamp>-<counter>.json`), and `bun run .claude/` second-stage execution. These essentially cannot false-positive, so they block immediately.
+**Tier 2 — family techniques (generic; critical to low).** The durable core. Install/build-time execution: lifecycle-script hooks, `binding.gyp` `<!(...)` command expansion ("Phantom Gyp"), RubyGems `extconf.rb` hooks. Off-Node evasion: Bun runtime downloads, `curl|bash`, `eval`+char-code and inline AES-GCM self-decryption. Privilege/evasion: `NOPASSWD:ALL`, `docker run --privileged -v /:/host` breakout, `isSecret":true` runner-memory scraping, `/etc/hosts` tampering. Credential access: IMDS metadata endpoints, credential-file sweeps, trufflehog abuse, npm token and maintainer enumeration. Propagation/persistence: workflow command-injection, self-hosted runner registration, AI-agent/editor persistence hooks, `.github/setup.js` self-injection, forged Sigstore/SLSA provenance, `results/…json` dead-drops, `python-requests` UA spoofing, and `rm -rf ~/`.
 
-**Tier 2 — behavioral heuristics (critical to low).** These describe *how* this class of attack works rather than this specific sample, so they catch Miasma variants that change their strings but keep their technique: Bun runtime downloads from release infrastructure, `eval()` combined with character-code array reconstruction, `NOPASSWD:ALL` sudoers injection, the `isSecret":true` runner-memory-scrape pattern, cloud metadata endpoint access (IMDS), credential-file sweeps, npm token enumeration endpoints, `/etc/hosts` tampering, nested base64 encoding, and `rm -rf ~/`.
-
-**Tier 3 — prompt injection (high to medium).** Text aimed at manipulating the *agent* rather than the machine: instruction overrides ("ignore previous instructions"), directives addressed to an AI agent ("AI assistant: run …"), commands hidden inside HTML comments (invisible when rendered on GitHub, but visible to an agent reading raw markdown), concealment instructions ("do not tell the user"), invisible or bidirectional Unicode characters used to hide text, and system-prompt probes.
+**Tier 3 — prompt injection (generic; high to medium).** Text aimed at the *agent* rather than the machine: instruction overrides, directives addressed to an AI agent, commands hidden in HTML comments (invisible when rendered, visible to an agent reading raw markdown), concealment instructions, invisible/bidirectional Unicode, and system-prompt probes.
 
 ## The verdict
 
@@ -42,17 +46,31 @@ It also checks commit file lists directly for `.github/setup.js`, the path Miasm
 | --- | --- |
 | CLI (`src/cli.js`) | exit code `1`, prints findings + block banner |
 | GitHub Action (`src/action.js`) | fails the job, emits `::error::`/`::warning::` annotations, sets `verdict`/`findings` outputs |
-| Claude Code hook (`hooks/claude-code-hook.js`) | exit code `2` — Claude Code withholds the content and shows the model a warning telling it to stop and report to the user |
+| Claude Code hook (`hooks/claude-code-hook.js`) | exit code `2` — Claude Code withholds the content and warns the model to stop and report to the user |
 | Library (`summarize().ok`) | returns `false`; caller decides |
 
 The hook **fails closed**: if the scanner itself crashes, it blocks rather than allows. Sub-threshold findings are still reported so a human can review them without failing automation.
 
 ## Limitations
 
-This is signature and heuristic matching, not semantic understanding. A determined attacker can phrase an injection the regexes do not cover, and novel obfuscation may evade the heuristics. The design leans on exact IOCs and behavioral patterns together so the common cases are reliable, while accepting that novel cases need other layers: `npm install --ignore-scripts`, pinned dependencies, least-privilege tokens, and branch protection remain essential.
+This is signature and heuristic matching, not semantic understanding. A determined attacker can phrase an injection the regexes don't cover, and novel obfuscation may evade the shape heuristics. The generic rules raise the bar — an attacker has to avoid *every* reused technique, not just change a name — but they are not a guarantee. Keep the baseline defenses: `npm install --ignore-scripts` in CI, exact-pinned dependencies with lockfile integrity, a registry cooldown on freshly published versions, least-privilege CI/CD tokens, and branch protection.
 
-Note that `src/rules.js`, `README.md`, and this file contain the IOC strings themselves — exclude the scanner's own install directory when scanning file trees, or you will detect the detector.
+Note that `src/`, `README.md`, and this file contain IOC strings themselves — exclude the scanner's own install directory when scanning file trees, or you'll detect the detector.
 
-## Updating the rules
+## Adding a new campaign
 
-As the campaign evolves, edit `src/rules.js`: add package versions to `COMPROMISED_PACKAGES`, hashes to `MALICIOUS_SHA256`, and new patterns to `TEXT_RULES` (each entry needs `id`, `severity`, `category`, `description`, `pattern`). Add a matching test in `test/test.js` — including a benign control — and run `npm test`.
+Preferred (no code): write a JSON pack and pass `--ioc-pack pack.json` (CLI), `ioc-packs:` (Action), or `options.extraPacks` (library):
+
+```json
+{
+  "name": "next-campaign",
+  "packages": { "some-pkg": ["1.2.3"] },
+  "hashes": ["<sha256>"],
+  "rules": [
+    { "id": "NEXT-MARKER", "severity": "critical", "category": "campaign-ioc",
+      "description": "…", "pattern": { "source": "the[- ]marker", "flags": "i" } }
+  ]
+}
+```
+
+In-tree: add a file under `src/campaigns/` and list it in `src/campaigns/index.js`. If you spot a genuinely new *technique*, add a generic rule to `GENERIC_RULES` in `src/rules.js`. Either way, add a test in `test/test.js` — including a benign control — and run `npm test`.
