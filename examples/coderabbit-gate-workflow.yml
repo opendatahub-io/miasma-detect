@@ -1,0 +1,62 @@
+# Example workflow: run miasma-detect as a gate in front of CodeRabbit.
+# Copy to .github/workflows/miasma-gate.yml, alongside examples/coderabbit.yaml
+# (as .coderabbit.yaml) which turns off CodeRabbit auto-review until the
+# `miasma-clean` label is applied.
+#
+# Flow per PR event (open / edit / new commits):
+#   1. Remove the `miasma-clean` label FIRST, so CodeRabbit never reviews
+#      content that hasn't been re-scanned (each push re-runs the gate).
+#   2. Run miasma-detect on the event payload + changed files.
+#   3. Clean  -> re-apply the label; CodeRabbit picks up the label event and reviews.
+#      Blocked -> label stays off, this check fails, CodeRabbit never processes the PR.
+#
+# Also make this workflow a required status check so blocked PRs can't merge.
+
+name: miasma-gate
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write   # needed to add/remove the gate label
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/nodejs-20:latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      GATE_LABEL: miasma-clean
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. Revoke the gate label before scanning (fresh commits = fresh scan).
+      - name: Revoke gate label
+        run: |
+          curl -sf -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/$PR/labels/$GATE_LABEL" \
+            || true   # 404 when label absent — fine
+
+      # 2. Scan. Fails the job (and the required check) on detection.
+      - name: Miasma detect
+        uses: ann-marie/miasma-detect@v1   # or `uses: ./` if vendored in-repo
+        with:
+          min-severity: medium
+          scan-changed-files: 'true'
+
+      # 3. Clean — apply the label; CodeRabbit's positive label match triggers its review.
+      - name: Grant gate label
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"labels\":[\"$GATE_LABEL\"]}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/$PR/labels"

@@ -114,6 +114,25 @@ Blocks the agent the moment fetched content matches — before it can act on it.
 
 The hook reads the event JSON from stdin, scans prompt/tool input/tool output, and exits `2` on detection — Claude Code blocks the content and shows the model a warning telling it to stop and report to the user. Threshold via `MIASMA_MIN_SEVERITY` env var. The hook fails **closed**: internal errors block rather than allow.
 
+## CodeRabbit
+
+Two complementary layers keep CodeRabbit from agentically processing malicious PR content. Example configs: [`examples/coderabbit.yaml`](examples/coderabbit.yaml) and [`examples/coderabbit-gate-workflow.yml`](examples/coderabbit-gate-workflow.yml).
+
+**Layer 1 — label gate (prevention).** CodeRabbit is a webhook-driven SaaS, so a repo can't intercept its input directly — but it can withhold the review trigger. In `.coderabbit.yaml`, disable auto-review and opt in via a positive label match:
+
+```yaml
+reviews:
+  auto_review:
+    enabled: false
+    labels: ["miasma-clean"]
+```
+
+Then install the gate workflow (`examples/coderabbit-gate-workflow.yml` → `.github/workflows/miasma-gate.yml`). On every PR open/edit/push it removes the `miasma-clean` label, runs this scanner, and re-applies the label only on a clean verdict. CodeRabbit starts its review only when the label appears; blocked PRs fail the check and are never processed. Make `miasma-gate` a required status check so they can't merge either.
+
+**Layer 2 — pre-merge checks (defense in depth).** `examples/coderabbit.yaml` also defines two `custom_checks` in `error` mode (with `request_changes_workflow: true` so failures block the merge): one instructing CodeRabbit to fail the PR on supply-chain indicators, one on agent-manipulation attempts. This covers what slips past layer 1 — including the race window below.
+
+Caveats: there is a small race on pushes — if a PR already carries the label from a previous clean scan, CodeRabbit's incremental review may start in the seconds before the gate workflow revokes it. The label gates *reviews* only; `@coderabbitai` comment interactions aren't controlled by it. And when writing check instructions, *describe* indicators rather than quoting exact IOC strings, or your `.coderabbit.yaml` will itself trip the changed-files scan (the example config is written this way and scans clean).
+
 ## Jenkins / anywhere else
 
 ```groovy
