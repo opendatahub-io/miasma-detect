@@ -1,9 +1,9 @@
 name: 'Miasma Detect'
 description: >-
-  Scans GitHub PR/issue/comment event payloads and changed files for Miasma
-  supply-chain campaign IOCs, generic supply-chain attack heuristics, and
-  prompt-injection payloads. Fails the check on detection so downstream
-  automation (including coding agents) stops processing.
+  Scans GitHub PR/issue/comment event payloads and changed files for
+  Shai-Hulud/Miasma-family supply-chain worm IOCs, generic family-technique
+  heuristics, and prompt-injection payloads. Fails the check on detection so
+  downstream automation (including coding agents) stops processing.
 author: 'Ann Marie Fred'
 branding:
   icon: 'shield'

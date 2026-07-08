@@ -112,7 +112,7 @@ Blocks the agent the moment fetched content matches — before it can act on it.
 }
 ```
 
-The hook reads the event JSON from stdin, scans prompt/tool input/tool output, and exits `2` on detection — Claude Code blocks the content and shows the model a warning telling it to stop and report to the user. Threshold via `MIASMA_MIN_SEVERITY` env var. The hook fails **closed**: internal errors block rather than allow.
+The hook reads the event JSON from stdin, scans prompt/tool input/tool output, and exits `2` on detection — Claude Code blocks the content and shows the model a warning telling it to stop and report to the user. Threshold via `MIASMA_MIN_SEVERITY`; extra campaign packs via `MIASMA_IOC_PACKS` (comma/newline-separated JSON paths, same format as `--ioc-pack`). The hook fails **closed**: internal errors block rather than allow.
 
 ## CodeRabbit
 

@@ -135,8 +135,8 @@ const GENERIC_RULES = [
     id: 'SC-TRUFFLEHOG',
     severity: 'medium',
     category: 'supply-chain',
-    description: 'Abuse of a secret-scanner (trufflehog) to find credentials to steal — recurring family TTP',
-    pattern: /trufflehog/i,
+    description: 'Invocation or installation of a secret-scanner (trufflehog) to find credentials to steal — recurring family TTP. Matches execution/installation, not mere mentions.',
+    pattern: /\btrufflehog\b\s+(?:filesystem|git\b|github|gitlab|s3|gcs|docker|jenkins|--)|(?:npx|pip3?\s+install|brew\s+install|go\s+install|curl[^\n]*|wget[^\n]*)\s+[^\n]*trufflehog/i,
   },
   {
     id: 'SC-NPM-TOKEN-ENUM',
