@@ -11,6 +11,11 @@
 #      Blocked -> label stays off, this check fails, CodeRabbit never processes the PR.
 #
 # Also make this workflow a required status check so blocked PRs can't merge.
+#
+# IMPORTANT: this gate only fires on pull requests. Direct pushes bypass it —
+# pair it with branch protection (require PRs + this check on protected
+# branches) AND the push-triggered scan in examples/workflow.yml so direct
+# pushes are still scanned after the fact.
 
 name: miasma-gate
 

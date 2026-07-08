@@ -151,12 +151,14 @@ sh 'git diff origin/main...HEAD | npx miasma-detect --stdin'   // non-zero exit 
 
 ## Caveats
 
-This is one defense-in-depth layer, not a guarantee. Regex/IOC scanning can't catch novel obfuscation, and the prompt-injection rules will have both false negatives and occasional false positives on security-related discussion (this README and `src/rules.js` themselves trigger detections — exclude the scanner's own install directory from scans). Keep the baseline mitigations from the Microsoft advisory: `npm install --ignore-scripts`, pinned dependencies, rotated credentials, and audit for repos described "Miasma: The Spreading Blight".
+This is one defense-in-depth layer, not a guarantee. Regex/IOC scanning can't catch novel obfuscation, and the prompt-injection rules will have both false negatives and occasional false positives on security-related discussion (this README and `src/` themselves trigger detections — exclude the scanner's own install directory from scans). Keep the baseline mitigations from the Microsoft advisory: `npm install --ignore-scripts`, pinned dependencies, rotated credentials, and audit for repos described "Miasma: The Spreading Blight".
 
-To update IOCs as the campaign evolves, edit `src/rules.js` (`COMPROMISED_PACKAGES`, `MALICIOUS_SHA256`, `TEXT_RULES`).
+**Direct pushes bypass PR scanning.** Everything in the PR gate (label gating, changed-file scans, control-tampering flags) only fires on pull requests — someone with push access to a branch skips all of it. Close this by (1) enabling branch protection so protected branches only change via PR with `miasma-gate`/`scan` as required status checks, and (2) subscribing the scan workflow to `push:` as well, as `examples/workflow.yml` does — a direct push then still gets its commits, changed files, and any `.miasmaignore`/`.coderabbit.yaml` tampering scanned after the fact and surfaced as a failed check. Note this is a *workflow trigger*, not an action input: an action can't choose its own events, so make sure `on: push` is present in your workflow file rather than assuming the action covers it.
+
+To cover a new campaign, add a pack under `src/campaigns/` or ship one at runtime via `--ioc-pack` (see "Covering a new campaign" above); new *technique* rules go in `GENERIC_RULES` in `src/rules.js`.
 
 ## Test
 
 ```bash
-npm test   # 27 tests: IOCs, heuristics, injections, benign controls, CLI/hook exit codes
+npm test   # 53 tests: IOCs, techniques, injections, packs, excludes, benign controls, CLI/hook exit codes
 ```
