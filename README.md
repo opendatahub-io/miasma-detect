@@ -141,6 +141,8 @@ Then install the gate workflow (`examples/coderabbit-gate-workflow.yml` → `.gi
 
 Caveats: there is a small race on pushes — if a PR already carries the label from a previous clean scan, CodeRabbit's incremental review may start in the seconds before the gate workflow revokes it. The label gates *reviews* only; `@coderabbitai` comment interactions aren't controlled by it. And when writing check instructions, *describe* indicators rather than quoting exact IOC strings, or your `.coderabbit.yaml` will itself trip the changed-files scan (the example config is written this way and scans clean).
 
+**Control-tampering defense:** a PR could try to disable these defenses instead of evading them — editing `.miasmaignore` to hide a payload from tree scans, or `.coderabbit.yaml` to remove the gate. The event scanner therefore flags any commit touching either file (`SC-IGNOREFILE-MODIFIED` / `SC-REVIEWGATE-MODIFIED`, high — blocks at the default threshold). Note the Action's changed-files scan never honors the PR branch's `.miasmaignore`; only the workflow-level `exclude:` input (protected by branch rules) applies there.
+
 ## Jenkins / anywhere else
 
 ```groovy

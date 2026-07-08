@@ -325,6 +325,16 @@ test('CLI --ioc-pack loads an external pack and blocks on it', () => {
   assert.strictEqual(code, 1);
 });
 
+test('flags PR commits touching .miasmaignore or .coderabbit.yaml (control tampering)', () => {
+  const event = {
+    commits: [{ message: 'chore: tidy config', added: [], modified: ['.miasmaignore', '.coderabbit.yaml'] }],
+  };
+  const got = ids(scanGithubEvent(event));
+  assert(got.includes('SC-IGNOREFILE-MODIFIED'));
+  assert(got.includes('SC-REVIEWGATE-MODIFIED'));
+  assert(!summarize(scanGithubEvent(event)).ok, 'tampering must block at default threshold');
+});
+
 test('CLI "--" separator allows paths beginning with a dash', () => {
   const cli = path.join(__dirname, '..', 'src', 'cli.js');
   const dashDir = path.join(tmp, '-dashdir');

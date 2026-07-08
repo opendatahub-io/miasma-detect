@@ -333,6 +333,10 @@ const SUSPICIOUS_COMMIT_FILES = [
   { re: /(?:^|[\/\\])binding\.gyp$/i, id: 'SC-BINDING-GYP-ADDED', desc: 'binding.gyp (node-gyp build file — verify it contains no "<!(...)" command expansion)', sev: 'medium' },
   { re: /(?:^|[\/\\])extconf\.rb$/i, id: 'SC-EXTCONF-ADDED', desc: 'extconf.rb (RubyGems build hook — verify it does not fetch/run code)', sev: 'medium' },
   { re: /\.cursor[\/\\]rules[\/\\]|\.vscode[\/\\]tasks\.json$|\.claude[\/\\]/i, id: 'SC-AGENT-HOOK-ADDED', desc: 'an AI-agent/editor auto-run hook (persistence that survives npm uninstall)' },
+  // Security-control tampering: PRs that edit the scanner's own suppression
+  // file or the AI-reviewer gate config are trying to disable the alarm.
+  { re: /(?:^|[\/\\])\.miasmaignore$/i, id: 'SC-IGNOREFILE-MODIFIED', desc: '.miasmaignore (scanner suppression file — a PR editing it can hide a payload from subsequent scans; review the new patterns line by line)' },
+  { re: /(?:^|[\/\\])\.coderabbit\.ya?ml$/i, id: 'SC-REVIEWGATE-MODIFIED', desc: '.coderabbit.yaml (AI-review gate config — a PR editing it can disable auto-review gating or pre-merge checks)' },
 ];
 
 /**
