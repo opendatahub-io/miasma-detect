@@ -1,0 +1,43 @@
+# Example workflow: gate every PR / issue / comment on the Miasma scanner.
+# Copy to .github/workflows/miasma-detect.yml in your repo.
+#
+# If you publish the action repo as <you>/miasma-detect, reference it as
+# `uses: <you>/miasma-detect@v1`. Until then you can vendor it and use a
+# local path (shown below for pull_request).
+
+name: miasma-detect
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    # GitHub-hosted runners are only available as Ubuntu/Windows/macOS VMs,
+    # so the job runs inside a Red Hat UBI 9 container on that VM to get a
+    # RHEL userland. For a fully Red Hat stack, use a self-hosted runner on
+    # RHEL instead (runs-on: [self-hosted, rhel]) and drop `container:`.
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/nodejs-20:latest
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          fetch-depth: 0
+
+      - name: Miasma detect
+        uses: ann-marie/miasma-detect@v1   # or `uses: ./` if vendored in-repo
+        with:
+          min-severity: medium
+          scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}

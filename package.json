@@ -1,0 +1,34 @@
+{
+  "name": "miasma-detect",
+  "version": "1.0.0",
+  "description": "Detect Miasma npm supply-chain campaign IOCs, generic supply-chain attack heuristics, and prompt-injection payloads in GitHub PRs/issues, files, and diffs. Fails fast so coding agents stop processing.",
+  "license": "MIT",
+  "author": "Ann Marie Fred <afred@redhat.com>",
+  "main": "index.js",
+  "bin": {
+    "miasma-detect": "src/cli.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "hooks/",
+    "action.yml",
+    "README.md",
+    "docs/"
+  ],
+  "scripts": {
+    "test": "node test/test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "security",
+    "supply-chain",
+    "miasma",
+    "npm-audit",
+    "prompt-injection",
+    "ioc",
+    "malware-detection"
+  ]
+}

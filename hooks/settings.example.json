@@ -1,0 +1,26 @@
+{
+  "$comment": "Example .claude/settings.json hook wiring for miasma-detect. Adjust the command path to where you installed the package (or use `node node_modules/miasma-detect/hooks/claude-code-hook.js`).",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./node_modules/miasma-detect/hooks/claude-code-hook.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch|WebSearch|Bash|Read|mcp__github__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./node_modules/miasma-detect/hooks/claude-code-hook.js"
+          }
+        ]
+      }
+    ]
+  }
+}

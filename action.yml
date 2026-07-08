@@ -1,0 +1,38 @@
+name: 'Miasma Detect'
+description: >-
+  Scans GitHub PR/issue/comment event payloads and changed files for Miasma
+  supply-chain campaign IOCs, generic supply-chain attack heuristics, and
+  prompt-injection payloads. Fails the check on detection so downstream
+  automation (including coding agents) stops processing.
+author: 'Ann Marie Fred'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  min-severity:
+    description: 'Failure threshold: low | medium | high | critical'
+    required: false
+    default: 'medium'
+  categories:
+    description: 'Comma-separated rule categories to apply (default: all). Options: miasma-ioc,supply-chain,prompt-injection,package'
+    required: false
+    default: ''
+  scan-changed-files:
+    description: 'Also scan files changed in the PR/push (requires actions/checkout with fetch-depth: 0)'
+    required: false
+    default: 'true'
+  paths:
+    description: 'Additional newline-separated paths to scan'
+    required: false
+    default: ''
+
+outputs:
+  verdict:
+    description: '"clean" or "blocked"'
+  findings:
+    description: 'JSON array of findings'
+
+runs:
+  using: 'node20'
+  main: 'src/action.js'
