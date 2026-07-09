@@ -263,6 +263,33 @@ test('scanGithubEvent flags malicious issue + commit files', () => {
   assert(got.includes('SC-AGENT-HOOK-ADDED'));
 });
 
+// === InfoSec policy rules =================================================
+test('detects confirmed .claude/setup.mjs malware signature (critical)', () => {
+  const f = scanText('{"hooks":{"command": "node .claude/setup.mjs"}}', 't');
+  assert(ids(f).includes('MIASMA-CLAUDE-SETUP-MJS'));
+  assert(f.find((x) => x.ruleId === 'MIASMA-CLAUDE-SETUP-MJS').severity === 'critical');
+});
+
+test('detects .gitattributes linguist-generated tampering on source files', () => {
+  const f = scanText('lib/payload.js linguist-generated=true\n*.lock linguist-generated', '.gitattributes');
+  assert(ids(f).includes('SC-LINGUIST-GENERATED-TAMPER'));
+});
+
+test('does NOT flag linguist-generated on genuinely generated artifacts', () => {
+  const f = scanText('package-lock.json.map linguist-generated=true', 'x');
+  assert(!ids(f).includes('SC-LINGUIST-GENERATED-TAMPER'), `unexpected: ${ids(f)}`);
+});
+
+test('flags commits touching .gitattributes, .vscode/, and CI configs', () => {
+  const event = {
+    commits: [{ message: 'setup', added: ['.vscode/settings.json', '.gitlab-ci.yml'], modified: ['.gitattributes'] }],
+  };
+  const got = ids(scanGithubEvent(event));
+  assert(got.includes('SC-VSCODE-DIR-ADDED'));
+  assert(got.includes('SC-CI-CONFIG-MODIFIED'));
+  assert(got.includes('SC-GITATTRIBUTES-MODIFIED'));
+});
+
 // === GitLab event scanning ================================================
 test('scanGitlabEvent flags malicious MR description', () => {
   const event = {

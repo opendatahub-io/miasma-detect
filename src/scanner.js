@@ -337,6 +337,15 @@ const SUSPICIOUS_COMMIT_FILES = [
   // file or the AI-reviewer gate config are trying to disable the alarm.
   { re: /(?:^|[\/\\])\.miasmaignore$/i, id: 'SC-IGNOREFILE-MODIFIED', desc: '.miasmaignore (scanner suppression file — a PR editing it can hide a payload from subsequent scans; review the new patterns line by line)' },
   { re: /(?:^|[\/\\])\.coderabbit\.ya?ml$/i, id: 'SC-REVIEWGATE-MODIFIED', desc: '.coderabbit.yaml (AI-review gate config — a PR editing it can disable auto-review gating or pre-merge checks)' },
+  // Review-visibility tampering: .gitattributes can mark files "generated"
+  // so GitHub collapses their diffs and reviewers never see the content.
+  { re: /(?:^|[\/\\])\.gitattributes$/i, id: 'SC-GITATTRIBUTES-MODIFIED', desc: '.gitattributes (can mark files linguist-generated so GitHub collapses their diffs — verify no source files are being hidden from review)', sev: 'medium' },
+  // InfoSec policy: PRs introducing editor/agent config directories are
+  // rejected pending human review (.claude/ is already covered above).
+  { re: /(?:^|[\/\\])\.vscode[\/\\]/i, id: 'SC-VSCODE-DIR-ADDED', desc: 'a .vscode/ editor config directory (InfoSec policy: reject PRs adding .claude/ or .vscode/ pending human review)' },
+  // InfoSec policy: scrutinize every CI/CD pipeline change (GitHub workflows
+  // are covered above).
+  { re: /(?:^|[\/\\])(?:\.gitlab-ci\.ya?ml|Jenkinsfile|\.circleci[\/\\]config\.ya?ml|azure-pipelines\.ya?ml|\.drone\.ya?ml|\.travis\.ya?ml|cloudbuild\.ya?ml)$/i, id: 'SC-CI-CONFIG-MODIFIED', desc: 'CI/CD pipeline configuration (InfoSec policy: review every pipeline change with extreme care)', sev: 'medium' },
 ];
 
 /** Check a list of commit objects ({message, added[], modified[]}) against

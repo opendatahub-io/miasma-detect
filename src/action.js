@@ -28,7 +28,8 @@ function annotate(f) {
   process.stdout.write(`::${level}::${msg.replace(/\n/g, ' ')}\n`);
 }
 
-function changedFiles() {
+function changedFileStats() {
+  // Returns [{file, lines}] where lines = added + deleted ('-' for binary → 0).
   const base =
     process.env.GITHUB_BASE_REF ||
     (process.env.GITHUB_EVENT_NAME === 'push' ? 'HEAD~1' : null);
@@ -38,15 +39,34 @@ function changedFiles() {
       execFileSync('git', ['fetch', '--depth=1', 'origin', base], { stdio: 'ignore' });
     }
     const ref = process.env.GITHUB_BASE_REF ? `origin/${base}...HEAD` : `${base}..HEAD`;
-    return execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMR', ref], {
+    return execFileSync('git', ['diff', '--numstat', '--diff-filter=ACMR', ref], {
       encoding: 'utf8',
     })
       .split('\n')
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((l) => {
+        const [a, d, ...rest] = l.split('\t');
+        return { file: rest.join('\t'), lines: (parseInt(a, 10) || 0) + (parseInt(d, 10) || 0) };
+      });
   } catch (e) {
     process.stdout.write(`::notice::miasma-detect: could not compute changed files (${e.message})\n`);
     return [];
   }
+}
+
+/** Flag diffs so large the platform UI collapses them (hidden from human review). */
+function largeDiffFinding(f, threshold) {
+  return {
+    ruleId: 'SC-COLLAPSED-DIFF',
+    severity: 'high',
+    category: 'supply-chain',
+    description:
+      `Diff of ${f.file} changes ${f.lines} lines — large diffs are collapsed by the ` +
+      `platform UI ("not rendered by default"), a known technique for hiding payloads ` +
+      `from human review. A human must expand and review it (threshold: ${threshold}).`,
+    source: 'changed-files',
+    match: `${f.file} (${f.lines} lines)`,
+  };
 }
 
 function main() {
@@ -72,9 +92,11 @@ function main() {
 
   // 2. Changed files
   if (input('scan-changed-files', 'true') === 'true') {
-    for (const f of changedFiles()) {
-      if (isExcluded(f, false, compiledExcludes)) continue;
-      if (fs.existsSync(f)) findings.push(...scanFile(f, options));
+    const threshold = parseInt(input('large-diff-lines', '1000'), 10);
+    for (const f of changedFileStats()) {
+      if (isExcluded(f.file, false, compiledExcludes)) continue;
+      if (threshold > 0 && f.lines >= threshold) findings.push(largeDiffFinding(f, threshold));
+      if (fs.existsSync(f.file)) findings.push(...scanFile(f.file, options));
     }
   }
 

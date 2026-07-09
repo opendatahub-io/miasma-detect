@@ -1,14 +1,18 @@
-# Example workflow: run miasma-detect as a gate in front of CodeRabbit.
-# Copy to .github/workflows/miasma-gate.yml, alongside examples/coderabbit.yaml
-# (as .coderabbit.yaml) which turns off CodeRabbit auto-review until the
-# `miasma-clean` label is applied.
+# Example workflow: run miasma-detect + a human sign-off as a gate in front
+# of CodeRabbit (or any AI processing). Copy to .github/workflows/miasma-gate.yml,
+# alongside examples/coderabbit.yaml (as .coderabbit.yaml) which turns off
+# CodeRabbit auto-review until the `miasma-clean` label is applied.
 #
-# Flow per PR event (open / edit / new commits):
+# Flow per PR event (open / edit / new commits / sign-off comment):
 #   1. Remove the `miasma-clean` label FIRST, so CodeRabbit never reviews
 #      content that hasn't been re-scanned (each push re-runs the gate).
-#   2. Run miasma-detect on the event payload + changed files.
-#   3. Clean  -> re-apply the label; CodeRabbit picks up the label event and reviews.
-#      Blocked -> label stays off, this check fails, CodeRabbit never processes the PR.
+#   2. Run miasma-detect on the event payload + changed files (including
+#      collapsed-diff detection for changes hidden by the GitHub UI).
+#   3. If REQUIRE_SIGNOFF is true, require a `/miasma-approve` comment from a
+#      user with write/admin permission, posted AFTER the latest commit
+#      (stale approvals from before a new push don't count).
+#   4. Scan clean + sign-off present -> apply the label; CodeRabbit reviews.
+#      Otherwise -> label stays off, this check stays red, no AI processing.
 #
 # Also make this workflow a required status check so blocked PRs can't merge.
 #
@@ -22,23 +26,43 @@ name: miasma-gate
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
+  issue_comment:
+    types: [created]      # re-runs the gate when someone comments /miasma-approve
 
 permissions:
   contents: read
   pull-requests: write   # needed to add/remove the gate label
 
+env:
+  GATE_LABEL: miasma-clean
+  REQUIRE_SIGNOFF: 'true'          # set 'false' for scan-only gating
+  SIGNOFF_COMMAND: '/miasma-approve'
+
 jobs:
   gate:
+    # Run on PR events, or on PR comments containing the sign-off command.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '/miasma-approve'))
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/nodejs-20:latest
     env:
       GH_TOKEN: ${{ github.token }}
-      PR: ${{ github.event.pull_request.number }}
-      GATE_LABEL: miasma-clean
+      API: ${{ github.api_url }}/repos/${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
     steps:
+      # For comment events there is no PR payload ref; resolve the head SHA.
+      - name: Resolve PR head
+        id: head
+        run: |
+          SHA=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" "$API/pulls/$PR" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).head.sha))")
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ steps.head.outputs.sha }}
           fetch-depth: 0
 
       # 1. Revoke the gate label before scanning (fresh commits = fresh scan).
@@ -47,7 +71,7 @@ jobs:
           curl -sf -X DELETE \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/issues/$PR/labels/$GATE_LABEL" \
+            "$API/issues/$PR/labels/$GATE_LABEL" \
             || true   # 404 when label absent — fine
 
       # 2. Scan. Fails the job (and the required check) on detection.
@@ -56,12 +80,38 @@ jobs:
         with:
           min-severity: medium
           scan-changed-files: 'true'
+          large-diff-lines: '1000'
 
-      # 3. Clean — apply the label; CodeRabbit's positive label match triggers its review.
+      # 3. Human sign-off: /miasma-approve from write/admin, after latest commit.
+      - name: Check human sign-off
+        if: env.REQUIRE_SIGNOFF == 'true'
+        run: |
+          export COMMIT_DATE=$(git show -s --format=%cI HEAD)
+          curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            "$API/issues/$PR/comments?per_page=100" > /tmp/comments.json
+          node -e '
+            const cmd = process.env.SIGNOFF_COMMAND;
+            const commitDate = process.env.COMMIT_DATE;
+            const ok = ["OWNER","MEMBER","COLLABORATOR"];
+            const comments = JSON.parse(require("fs").readFileSync("/tmp/comments.json","utf8"));
+            const approved = comments.some((c) =>
+              c.body && c.body.includes(cmd) &&
+              ok.includes(c.author_association) &&
+              c.created_at > commitDate);
+            if (!approved) {
+              console.error(`No fresh sign-off: a maintainer must comment ${cmd} after the latest commit (${commitDate}).`);
+              process.exit(1);
+            }
+            console.log("Human sign-off verified.");
+          ' 2>&1
+        shell: bash
+
+      # 4. Clean + signed off — apply the label; CodeRabbit's positive label
+      #    match triggers its review / downstream AI processing may proceed.
       - name: Grant gate label
         run: |
           curl -sf -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -d "{\"labels\":[\"$GATE_LABEL\"]}" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/issues/$PR/labels"
+            "$API/issues/$PR/labels"

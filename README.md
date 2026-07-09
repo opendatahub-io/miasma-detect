@@ -170,6 +170,20 @@ For GitLab **webhooks** (e.g. a bot or service consuming merge_request/note/push
 sh 'git diff origin/main...HEAD | npx miasma-detect --stdin'   // non-zero exit fails the stage
 ```
 
+## Automating InfoSec PR-review rules
+
+The gate automates the standard InfoSec mandates for PR review, so humans only get pulled in when something needs judgment:
+
+**"Don't run suspicious branches through AI tools."** The label gate + Claude Code hook mean no AI processing happens until the scan passes — and, with sign-off enabled, until a human explicitly approves (see below).
+
+**"Expand and review every collapsed diff."** Changed files whose diff meets the `large-diff-lines` threshold (default 1000; `MIASMA_LARGE_DIFF_LINES` on GitLab) raise `SC-COLLAPSED-DIFF` (**high**) — platforms don't render large diffs by default, which attackers exploit to hide payloads from review. The scan stays red until a human expands, reviews, and signs off (or excludes a legitimately generated path). Relatedly, `SC-LINGUIST-GENERATED-TAMPER` (high) catches `.gitattributes` changes that mark source files `linguist-generated` — the other way to make GitHub collapse a diff — and `SC-GITATTRIBUTES-MODIFIED` (medium) flags any `.gitattributes` change in a PR.
+
+**"Reject PRs containing `.claude/` or `.vscode/`."** `SC-AGENT-HOOK-ADDED` and `SC-VSCODE-DIR-ADDED` (both high) block them pending review, and the confirmed malware signature — an agent hook running `node .claude/setup.mjs` — is `MIASMA-CLAUDE-SETUP-MJS` (**critical**). Per the advisory: don't interact further, report immediately.
+
+**"Scrutinize all CI/CD configuration changes."** `SC-WORKFLOW-ADDED` (GitHub workflows) and `SC-CI-CONFIG-MODIFIED` (`.gitlab-ci.yml`, `Jenkinsfile`, CircleCI/Azure/Drone/Travis configs) flag every pipeline change for human eyes.
+
+**Human sign-off before AI processing.** Two mechanisms, per platform. On GitHub (`examples/coderabbit-gate-workflow.yml`, `REQUIRE_SIGNOFF: 'true'`): the gate label is only applied after a user with write/admin permission comments `/miasma-approve` — and only if that comment postdates the latest commit, so a push after approval automatically re-locks the PR. On GitLab (`examples/gitlab-ci.yml`): a `when: manual` + `allow_failure: false` job that a maintainer must click — GitLab's permission model controls who can play it, and each new push creates a fresh pipeline with the job un-played, so approvals can't go stale. The manual job is more robust than comment parsing; if you prefer the comment convention on GitLab too, the same pattern can be built with a notes-API poll and a project access token.
+
 ## Caveats
 
 This is one defense-in-depth layer, not a guarantee. Regex/IOC scanning can't catch novel obfuscation, and the prompt-injection rules will have both false negatives and occasional false positives on security-related discussion (this README and `src/` themselves trigger detections — exclude the scanner's own install directory from scans). Keep the baseline mitigations from the Microsoft advisory: `npm install --ignore-scripts`, pinned dependencies, rotated credentials, and audit for repos described "Miasma: The Spreading Blight".
@@ -181,5 +195,5 @@ To cover a new campaign, add a pack under `src/campaigns/` or ship one at runtim
 ## Test
 
 ```bash
-npm test   # 58 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, benign controls, exit codes
+npm test   # 62 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, policy rules, benign controls, exit codes
 ```

@@ -26,7 +26,27 @@ miasma-detect:
   # Optional configuration (set as CI/CD variables or here):
   #   MIASMA_MIN_SEVERITY: "medium"
   #   MIASMA_CATEGORIES: "campaign-ioc,package,supply-chain,prompt-injection"
+  #   MIASMA_LARGE_DIFF_LINES: "1000"   # flag diffs the UI collapses (0 = off)
   #   MIASMA_EXCLUDE: |
   #     vendor/
   #     **/testdata/
   #   MIASMA_IOC_PACKS: "packs/new-wave.json"
+
+# Human sign-off gate (GitLab-native alternative to approval comments):
+# a maintainer must click ▶ on this job before any later stage runs.
+# - `when: manual` + `allow_failure: false` blocks the pipeline until played.
+# - GitLab's own permission model controls who can play it (protect the
+#   environment or use protected branches to restrict to maintainers).
+# - A new push creates a new pipeline where the job is un-played again, so
+#   sign-offs can never go stale — approval always applies to the exact SHA.
+# The job echoes who approved for the audit trail.
+human-signoff:
+  stage: gate
+  needs: [miasma-detect]      # only offered after the scan passes
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+  allow_failure: false
+  image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+  script:
+    - echo "Human sign-off by $GITLAB_USER_LOGIN ($GITLAB_USER_NAME) for $CI_COMMIT_SHA"

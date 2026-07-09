@@ -17,6 +17,8 @@
  *   MIASMA_IOC_PACKS           comma/newline-separated extra pack JSON paths
  *   MIASMA_EXCLUDE             newline-separated gitignore-style patterns
  *   MIASMA_SCAN_CHANGED_FILES  "false" to skip file scanning (default: true)
+ *   MIASMA_LARGE_DIFF_LINES    flag diffs >= this many lines as collapsed/
+ *                              hidden from review (default: 1000; 0 disables)
  *
  * Requires GIT_DEPTH: "0" (or a sufficiently deep clone) for MR diffs.
  */
@@ -45,8 +47,9 @@ const SURFACE_VARS = [
   'CI_COMMIT_BRANCH',
 ];
 
-function changedFiles() {
+function changedFileStats() {
   // MR pipelines: diff against the MR diff base. Push pipelines: previous SHA.
+  // Returns [{file, lines}] where lines = added + deleted ('-' for binary → 0).
   let range = null;
   if (env.CI_MERGE_REQUEST_DIFF_BASE_SHA) {
     range = `${env.CI_MERGE_REQUEST_DIFF_BASE_SHA}...HEAD`;
@@ -55,11 +58,15 @@ function changedFiles() {
   }
   if (!range) return [];
   try {
-    return execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMR', range], {
+    return execFileSync('git', ['diff', '--numstat', '--diff-filter=ACMR', range], {
       encoding: 'utf8',
     })
       .split('\n')
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((l) => {
+        const [a, d, ...rest] = l.split('\t');
+        return { file: rest.join('\t'), lines: (parseInt(a, 10) || 0) + (parseInt(d, 10) || 0) };
+      });
   } catch (e) {
     process.stdout.write(`miasma-detect: could not compute changed files (${e.message})\n`);
     return [];
@@ -83,10 +90,26 @@ function main() {
     if (env[v]) findings.push(...scanText(env[v], v, options));
   }
 
-  // 2. Changed files: name-based tampering/propagation checks + content scan.
+  // 2. Changed files: name-based tampering/propagation checks, collapsed-diff
+  //    detection, and content scan.
   if ((env.MIASMA_SCAN_CHANGED_FILES || 'true') !== 'false') {
-    for (const f of changedFiles()) {
+    const threshold = parseInt(env.MIASMA_LARGE_DIFF_LINES || '1000', 10);
+    for (const stat of changedFileStats()) {
+      const f = stat.file;
       if (isExcluded(f, false, compiledExcludes)) continue;
+      if (threshold > 0 && stat.lines >= threshold) {
+        findings.push({
+          ruleId: 'SC-COLLAPSED-DIFF',
+          severity: 'high',
+          category: 'supply-chain',
+          description:
+            `Diff of ${f} changes ${stat.lines} lines — large diffs are collapsed by the ` +
+            `platform UI, a known technique for hiding payloads from human review. ` +
+            `A human must expand and review it (threshold: ${threshold}).`,
+          source: 'changed-files',
+          match: `${f} (${stat.lines} lines)`,
+        });
+      }
       for (const sig of SUSPICIOUS_COMMIT_FILES) {
         if (sig.re.test(f)) {
           findings.push({

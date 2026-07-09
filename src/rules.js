@@ -211,6 +211,13 @@ const GENERIC_RULES = [
     pattern: /rm\s+-rf\s+~\/?(?:\s|$|["'&;])|rm\s+-rf\s+(?:"?\$HOME"?|\/root)\b/,
   },
   {
+    id: 'SC-LINGUIST-GENERATED-TAMPER',
+    severity: 'high',
+    category: 'supply-chain',
+    description: '.gitattributes marks source/config files as linguist-generated — GitHub collapses their diffs, hiding the content from human review',
+    pattern: /^[^\n#]*\.(?:js|cjs|mjs|ts|jsx|tsx|json|ya?ml|sh|py|rb|go|gyp)(?:\s|\*)[^\n]*linguist-generated/im,
+  },
+  {
     id: 'SC-GIT-COMMIT-DEP',
     severity: 'medium',
     category: 'supply-chain',

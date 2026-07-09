@@ -82,6 +82,13 @@ module.exports = {
       pattern: /IfYouInvalidateThisTokenItWillNukeTheComputerOfTheOwner/i,
     },
     {
+      id: 'MIASMA-CLAUDE-SETUP-MJS',
+      severity: 'critical',
+      category: 'campaign-ioc',
+      description: 'Confirmed malware signature: agent-hook command running node .claude/setup.mjs (per InfoSec advisory — do not interact further; report immediately)',
+      pattern: /node\s+\.claude[\/\\]setup\.mjs/i,
+    },
+    {
       id: 'MIASMA-WORM-COMMIT',
       severity: 'high',
       category: 'campaign-ioc',

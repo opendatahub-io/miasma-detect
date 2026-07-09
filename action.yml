@@ -22,6 +22,10 @@ inputs:
     description: 'Newline- or comma-separated paths to extra IOC pack JSON files (adds new campaigns without code changes)'
     required: false
     default: ''
+  large-diff-lines:
+    description: 'Flag changed files whose diff meets/exceeds this many lines (collapsed by the GitHub UI, hidden from human review). 0 disables.'
+    required: false
+    default: '1000'
   exclude:
     description: 'Newline-separated gitignore-style patterns to skip (a .miasmaignore file at the repo root is also honored for directory scans)'
     required: false
