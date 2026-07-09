@@ -1,0 +1,68 @@
+# Self-scan: run miasma-detect on its own repo's PRs, issues, and comments.
+#
+# UNPINNED BY DESIGN (repo is changing fast), but self-subversion-resistant:
+# the scanner code is checked out from MAIN into ./.miasma-scanner and run
+# from there — a PR can modify src/action.js all it wants; the copy that
+# judges the PR is always the latest merged one, never the PR's own.
+# Revisit pinning to a SHA once the code stabilizes.
+#
+# Excludes below are the files that legitimately contain campaign indicator
+# strings (rules, packs, tests, docs) and would self-match on every touch.
+# Anything NOT listed — including new files added anywhere — is still
+# content-scanned, and PRs touching the excluded files still need human
+# review by nature of what they are. Keep this list in sync by running:
+#   node src/cli.js . | grep 'source:' | sort -u
+
+name: miasma-detect
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write   # report comment on PRs
+  actions: write         # /miasma-approve comment can re-run the failed PR check
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      # PR/push content to scan (merge ref for PRs).
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          fetch-depth: 0
+
+      # The scanner itself — ALWAYS from main, never from the PR.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: main
+          path: .miasma-scanner
+
+      - name: Miasma detect (self-scan)
+        uses: ./.miasma-scanner
+        with:
+          min-severity: medium
+          large-diff-lines: '1000'
+          scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          pr-comment: 'true'
+          exclude: |
+            .miasma-scanner/
+            README.md
+            action.yml
+            package.json
+            docs/HOW-IT-WORKS.md
+            hooks/claude-code-hook.js
+            hooks/settings.example.json
+            src/campaigns/
+            src/cli.js
+            src/rules.js
+            src/scanner.js
+            test/test.js
