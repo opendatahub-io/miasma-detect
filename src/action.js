@@ -8,8 +8,60 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { scanGithubEvent, scanFile, scanChangedFilename, summarize, loadPacks, compileExcludes, isExcluded } = require('./scanner');
+const { scanGithubEvent, scanFile, scanChangedFilename, summarize, canWaive, loadPacks, compileExcludes, isExcluded } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
+
+const AUTHORIZED = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
+function prNumberFrom(payload) {
+  return (
+    (payload.pull_request && payload.pull_request.number) ||
+    (payload.issue && payload.issue.pull_request && payload.issue.number) ||
+    null
+  );
+}
+
+/**
+ * Look for a fresh sign-off: the command, commented by a user with repo
+ * write access, AFTER the PR's latest commit (stale approvals don't count).
+ * Returns {approver, at} or null.
+ */
+async function findSignoff(token, base, prNumber, command) {
+  const pr = await gh(token, 'GET', `${base}/pulls/${prNumber}`);
+  const headSha = pr.head.sha;
+  const commit = await gh(token, 'GET', `${base}/commits/${headSha}`);
+  const commitDate = commit.commit.committer.date;
+  const comments = await gh(token, 'GET', `${base}/issues/${prNumber}/comments?per_page=100`);
+  const fresh = comments
+    .filter(
+      (c) =>
+        c.body &&
+        c.body.includes(command) &&
+        AUTHORIZED.includes(c.author_association) &&
+        c.created_at > commitDate
+    )
+    .pop();
+  return fresh ? { approver: fresh.user && fresh.user.login, at: fresh.created_at, headSha } : null;
+}
+
+/**
+ * When a sign-off arrives as a comment, the comment-triggered run can't turn
+ * the PR's original check green — re-run the failed pull_request run so the
+ * verdict lands on the PR. Needs `actions: write`; failure is non-fatal.
+ */
+async function rerunPrRun(token, base, headSha) {
+  const runs = await gh(
+    token,
+    'GET',
+    `${base}/actions/runs?event=pull_request&head_sha=${headSha}&per_page=20`
+  );
+  const failed = (runs.workflow_runs || []).find(
+    (r) => r.name === process.env.GITHUB_WORKFLOW && r.conclusion === 'failure'
+  );
+  if (!failed) return false;
+  await gh(token, 'POST', `${base}/actions/runs/${failed.id}/rerun-failed-jobs`);
+  return true;
+}
 
 async function gh(token, method, url, body) {
   const res = await fetch(url, {
@@ -27,11 +79,9 @@ async function gh(token, method, url, body) {
 }
 
 /** Upsert the report comment on the PR (one comment, updated in place). */
-async function upsertPrComment(payload, summary, options) {
+async function upsertPrComment(payload, summary, options, waivedBy) {
   const token = input('github-token', process.env.GITHUB_TOKEN || '');
-  const prNumber =
-    (payload.pull_request && payload.pull_request.number) ||
-    (payload.issue && payload.issue.pull_request && payload.issue.number);
+  const prNumber = prNumberFrom(payload);
   if (!prNumber) return; // push/other events have no PR to comment on
   if (!token) {
     process.stdout.write(
@@ -45,17 +95,20 @@ async function upsertPrComment(payload, summary, options) {
   const runUrl = process.env.GITHUB_RUN_ID
     ? `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
     : null;
+  const signoffCmd = input('signoff-command', '/miasma-approve');
   const ctx = {
     platform: 'github',
     runUrl,
-    signoff:
-      'If sign-off gating is enabled: after the scan passes, a maintainer (write/admin) comments `/miasma-approve` to authorize AI processing. Approvals from before the latest commit do not count.',
+    waivedBy,
+    signoff: signoffCmd
+      ? `After reviewing the findings above, a maintainer (write/admin) comments \`${signoffCmd}\` to acknowledge them and unblock — the check re-runs and passes. Approvals from before the latest commit don't count, and critical findings can never be waived this way.`
+      : null,
   };
 
   const comments = await gh(token, 'GET', `${base}/issues/${prNumber}/comments?per_page=100`);
   const existing = comments.find((c) => c.body && c.body.includes(MARKER));
 
-  if (!summary.ok) {
+  if (!summary.ok || waivedBy) {
     const body = buildReport(summary, ctx);
     if (existing) await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body });
     else await gh(token, 'POST', `${base}/issues/${prNumber}/comments`, { body });
@@ -169,14 +222,59 @@ async function main() {
 
   const summary = summarize(findings, options);
   summary.findings.forEach(annotate);
-  setOutput('verdict', summary.ok ? 'clean' : 'blocked');
+
+  // Human sign-off waiver: a maintainer's fresh approval comment can waive
+  // blocking findings up to signoff-max-severity. Critical findings
+  // (confirmed IOCs) can never be waived at the default setting.
+  let waivedBy = null;
+  const signoffCmd = input('signoff-command', '/miasma-approve');
+  const token = input('github-token', process.env.GITHUB_TOKEN || '');
+  const api = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const base = `${api}/repos/${process.env.GITHUB_REPOSITORY}`;
+  const prNumber = prNumberFrom(payload);
+
+  if (!summary.ok && signoffCmd && token && prNumber) {
+    if (canWaive(summary, input('signoff-max-severity', 'high'))) {
+      try {
+        const signoff = await findSignoff(token, base, prNumber, signoffCmd);
+        if (signoff) {
+          waivedBy = signoff;
+          summary.ok = true;
+          process.stdout.write(
+            `::notice::miasma-detect: ${summary.blocking} finding(s) acknowledged and waived by ` +
+              `@${signoff.approver} via ${signoffCmd} at ${signoff.at}.\n`
+          );
+          // Comment-triggered run: also flip the PR's failed check green.
+          if (process.env.GITHUB_EVENT_NAME === 'issue_comment') {
+            try {
+              await rerunPrRun(token, base, signoff.headSha);
+            } catch {
+              process.stdout.write(
+                '::notice::miasma-detect: could not re-run the PR check automatically ' +
+                  '(needs `actions: write`) — re-run the failed check manually to apply the sign-off.\n'
+              );
+            }
+          }
+        }
+      } catch (e) {
+        process.stdout.write(`::notice::miasma-detect: sign-off lookup failed (${e.message})\n`);
+      }
+    } else {
+      process.stdout.write(
+        '::error::miasma-detect: findings above signoff-max-severity are present — ' +
+          'this block CANNOT be waived by sign-off. Treat as confirmed-hostile and report it.\n'
+      );
+    }
+  }
+
+  setOutput('verdict', waivedBy ? 'waived' : summary.ok ? 'clean' : 'blocked');
   setOutput('findings', JSON.stringify(summary.findings));
 
   // Post/refresh the human-facing report comment on the PR. A comment
   // failure must never mask the scan verdict.
   if (input('pr-comment', 'true') === 'true') {
     try {
-      await upsertPrComment(payload, summary, options);
+      await upsertPrComment(payload, summary, options, waivedBy);
     } catch (e) {
       process.stdout.write(`::notice::miasma-detect: could not post PR comment (${e.message})\n`);
     }

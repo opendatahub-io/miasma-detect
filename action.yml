@@ -38,6 +38,14 @@ inputs:
     description: 'Additional newline-separated paths to scan'
     required: false
     default: ''
+  signoff-command:
+    description: 'Comment command a maintainer (write/admin) posts on the PR to acknowledge reviewed findings and waive the block. Approval must postdate the latest commit. Empty string disables waivers.'
+    required: false
+    default: '/miasma-approve'
+  signoff-max-severity:
+    description: 'Highest finding severity a sign-off can waive. Critical findings (confirmed IOCs) can never be waived when this is at its default.'
+    required: false
+    default: 'high'
   pr-comment:
     description: 'Post/update a report comment on the PR explaining findings, required human intervention, and how to unblock (needs pull-requests: write)'
     required: false
