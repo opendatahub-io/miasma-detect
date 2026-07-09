@@ -19,6 +19,9 @@
  *   MIASMA_SCAN_CHANGED_FILES  "false" to skip file scanning (default: true)
  *   MIASMA_LARGE_DIFF_LINES    flag diffs >= this many lines as collapsed/
  *                              hidden from review (default: 1000; 0 disables)
+ *   MIASMA_COMMENT_TOKEN       project access token (api scope, Reporter+) used
+ *                              to post the report as an MR comment
+ *   MIASMA_MR_COMMENT          "false" to disable MR comments (default: true)
  *
  * Requires GIT_DEPTH: "0" (or a sufficiently deep clone) for MR diffs.
  */
@@ -34,8 +37,56 @@ const {
   isExcluded,
   SUSPICIOUS_COMMIT_FILES,
 } = require('./scanner');
+const { buildReport, buildResolved, MARKER } = require('./report');
 
 const env = process.env;
+
+/**
+ * Upsert the report as an MR note (one note, updated in place).
+ * Needs a token with `api` scope in MIASMA_COMMENT_TOKEN (project access
+ * token, role Reporter+) — CI_JOB_TOKEN cannot post notes.
+ */
+async function upsertMrNote(summary) {
+  if ((env.MIASMA_MR_COMMENT || 'true') === 'false') return;
+  if (!env.CI_MERGE_REQUEST_IID || !env.CI_API_V4_URL) return; // not an MR pipeline
+  const token = env.MIASMA_COMMENT_TOKEN;
+  if (!token) {
+    if (!summary.ok) {
+      process.stdout.write(
+        'miasma-detect: set MIASMA_COMMENT_TOKEN (project access token, api scope) ' +
+          'to post this report as an MR comment. Report follows in the job log:\n\n'
+      );
+    }
+    return;
+  }
+  const base = `${env.CI_API_V4_URL}/projects/${encodeURIComponent(env.CI_PROJECT_ID)}/merge_requests/${env.CI_MERGE_REQUEST_IID}/notes`;
+  const headers = { 'PRIVATE-TOKEN': token, 'Content-Type': 'application/json' };
+  const ctx = {
+    platform: 'gitlab',
+    runUrl: env.CI_JOB_URL || null,
+    signoff:
+      'If the manual sign-off gate is enabled: after the scan passes, a maintainer plays the `human-signoff` job on this pipeline to authorize downstream stages. New pushes reset the sign-off.',
+  };
+
+  const listRes = await fetch(`${base}?per_page=100`, { headers });
+  if (!listRes.ok) throw new Error(`GET notes → ${listRes.status}`);
+  const existing = (await listRes.json()).find((n) => n.body && n.body.includes(MARKER));
+
+  if (!summary.ok) {
+    const body = buildReport(summary, ctx);
+    const res = existing
+      ? await fetch(`${base}/${existing.id}`, { method: 'PUT', headers, body: JSON.stringify({ body }) })
+      : await fetch(base, { method: 'POST', headers, body: JSON.stringify({ body }) });
+    if (!res.ok) throw new Error(`write note → ${res.status}`);
+  } else if (existing) {
+    const res = await fetch(`${base}/${existing.id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ body: buildResolved(ctx) }),
+    });
+    if (!res.ok) throw new Error(`update note → ${res.status}`);
+  }
+}
 
 // Text surfaces GitLab exposes as predefined variables.
 const SURFACE_VARS = [
@@ -73,7 +124,7 @@ function changedFileStats() {
   }
 }
 
-function main() {
+async function main() {
   const options = { minSeverity: env.MIASMA_MIN_SEVERITY || 'medium' };
   if (env.MIASMA_CATEGORIES) {
     options.categories = env.MIASMA_CATEGORIES.split(',').map((s) => s.trim()).filter(Boolean);
@@ -135,6 +186,14 @@ function main() {
     );
   }
 
+  // Post/refresh the human-facing report as an MR note. A comment failure
+  // must never mask the scan verdict.
+  try {
+    await upsertMrNote(summary);
+  } catch (e) {
+    process.stdout.write(`miasma-detect: could not post MR note (${e.message})\n`);
+  }
+
   if (!summary.ok) {
     process.stdout.write(
       `\nMIASMA-DETECT BLOCKED: ${summary.blocking} finding(s) at/above ` +
@@ -146,9 +205,7 @@ function main() {
   process.stdout.write(`miasma-detect: clean (${summary.total} sub-threshold finding(s))\n`);
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e) => {
   process.stdout.write(`miasma-detect crashed (failing closed): ${e.stack || e}\n`);
   process.exit(1);
-}
+});

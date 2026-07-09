@@ -9,6 +9,60 @@
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { scanGithubEvent, scanFile, summarize, loadPacks, compileExcludes, isExcluded } = require('./scanner');
+const { buildReport, buildResolved, MARKER } = require('./report');
+
+async function gh(token, method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'miasma-detect',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${method} ${url} → ${res.status}`);
+  return res.status === 204 ? null : res.json();
+}
+
+/** Upsert the report comment on the PR (one comment, updated in place). */
+async function upsertPrComment(payload, summary, options) {
+  const token = input('github-token', process.env.GITHUB_TOKEN || '');
+  const prNumber =
+    (payload.pull_request && payload.pull_request.number) ||
+    (payload.issue && payload.issue.pull_request && payload.issue.number);
+  if (!prNumber) return; // push/other events have no PR to comment on
+  if (!token) {
+    process.stdout.write(
+      '::notice::miasma-detect: no github-token input — cannot post the PR report comment. ' +
+        'Pass `github-token: ${{ github.token }}` and grant `pull-requests: write`.\n'
+    );
+    return;
+  }
+  const api = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const base = `${api}/repos/${process.env.GITHUB_REPOSITORY}`;
+  const runUrl = process.env.GITHUB_RUN_ID
+    ? `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : null;
+  const ctx = {
+    platform: 'github',
+    runUrl,
+    signoff:
+      'If sign-off gating is enabled: after the scan passes, a maintainer (write/admin) comments `/miasma-approve` to authorize AI processing. Approvals from before the latest commit do not count.',
+  };
+
+  const comments = await gh(token, 'GET', `${base}/issues/${prNumber}/comments?per_page=100`);
+  const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+
+  if (!summary.ok) {
+    const body = buildReport(summary, ctx);
+    if (existing) await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body });
+    else await gh(token, 'POST', `${base}/issues/${prNumber}/comments`, { body });
+  } else if (existing) {
+    await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body: buildResolved(ctx) });
+  }
+}
 
 function input(name, fallback) {
   const v = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`];
@@ -69,7 +123,7 @@ function largeDiffFinding(f, threshold) {
   };
 }
 
-function main() {
+async function main() {
   const options = { minSeverity: input('min-severity', 'medium') };
   const cats = input('categories', '');
   if (cats) options.categories = cats.split(',').map((s) => s.trim()).filter(Boolean);
@@ -84,9 +138,10 @@ function main() {
   const findings = [];
 
   // 1. Event payload (PR body/title, issue, comments, commits…)
+  let payload = {};
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (eventPath && fs.existsSync(eventPath)) {
-    const payload = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+    payload = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
     findings.push(...scanGithubEvent(payload, options));
   }
 
@@ -114,6 +169,16 @@ function main() {
   setOutput('verdict', summary.ok ? 'clean' : 'blocked');
   setOutput('findings', JSON.stringify(summary.findings));
 
+  // Post/refresh the human-facing report comment on the PR. A comment
+  // failure must never mask the scan verdict.
+  if (input('pr-comment', 'true') === 'true') {
+    try {
+      await upsertPrComment(payload, summary, options);
+    } catch (e) {
+      process.stdout.write(`::notice::miasma-detect: could not post PR comment (${e.message})\n`);
+    }
+  }
+
   if (!summary.ok) {
     process.stdout.write(
       `::error::MIASMA-DETECT BLOCKED: ${summary.blocking} finding(s) at/above ` +
@@ -124,9 +189,7 @@ function main() {
   process.stdout.write(`miasma-detect: clean (${summary.total} sub-threshold finding(s))\n`);
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e) => {
   process.stdout.write(`::error::miasma-detect crashed: ${e.stack || e}\n`);
   process.exit(1);
-}
+});

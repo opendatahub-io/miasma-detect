@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write   # lets the action post its report comment on PRs
 
 jobs:
   scan:

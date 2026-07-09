@@ -38,6 +38,14 @@ inputs:
     description: 'Additional newline-separated paths to scan'
     required: false
     default: ''
+  pr-comment:
+    description: 'Post/update a report comment on the PR explaining findings, required human intervention, and how to unblock (needs pull-requests: write)'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'Token used to post the PR report comment'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   verdict:

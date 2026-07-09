@@ -102,6 +102,8 @@ jobs:
 
 The action scans the event payload (PR/issue/comment text, commit messages, changed-file names) and, on PRs/pushes, the content of changed files. It emits `::error::` annotations and fails the job on detection. Outputs: `verdict` (`clean`/`blocked`) and `findings` (JSON). Make it a required status check to hard-gate merges and downstream agent workflows.
 
+**PR report comments.** On detection the action posts one comment on the PR (updated in place on re-runs, marked resolved when the PR comes clean) explaining each finding, the human intervention required, and the steps to unblock — fix and push, maintainer-approved excludes for false positives, then sign-off if enabled. Requires `pull-requests: write` and the default `github-token` input; disable with `pr-comment: 'false'`. Quoted matches in the report are defanged (`[.]`/`[:]`) and the report body is self-scanned before posting, so the comment can never re-trigger this or any other scanner reading comment text. On GitLab, the same report is posted as an MR note when `MIASMA_COMMENT_TOKEN` (project access token, `api` scope) is set; otherwise it appears in the job log.
+
 ## Claude Code hook
 
 Blocks the agent the moment fetched content matches — before it can act on it. Copy `hooks/settings.example.json` wiring into `.claude/settings.json`:
@@ -195,5 +197,5 @@ To cover a new campaign, add a pack under `src/campaigns/` or ship one at runtim
 ## Test
 
 ```bash
-npm test   # 62 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, policy rules, benign controls, exit codes
+npm test   # 65 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, policy rules, report safety, benign controls, exit codes
 ```
