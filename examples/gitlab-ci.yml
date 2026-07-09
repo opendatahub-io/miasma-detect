@@ -2,9 +2,11 @@
 # Include this job in your .gitlab-ci.yml (or `include:` this file).
 #
 # It runs first, scans MR text surfaces (title, description, branch name,
-# commit message) plus changed files, and fails on detection — so every
-# later stage (build, test, and especially any agentic job) never runs on
-# malicious input. Make later jobs depend on it via stages or `needs:`.
+# commit message) plus changed files, and reports findings. The manual
+# human-signoff job is the blocking gate: later stages (build, test, and
+# especially any agentic job) never run until a maintainer has reviewed
+# and played it — which is also the acknowledge-and-proceed (waiver) path
+# for findings whose remediation IS human review.
 #
 # GIT_DEPTH: "0" gives the full history needed to diff MR changes.
 
@@ -20,6 +22,15 @@ miasma-detect:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push"
+  # allow_failure: a red scan doesn't fail the pipeline by itself — the
+  # human-signoff gate below is what blocks. This is what makes waivers
+  # possible: a maintainer reviews the findings and plays the gate.
+  # Unwaivable (critical) findings are still hard-blocked: the sign-off
+  # job refuses via the exported MIASMA_WAIVABLE verdict.
+  allow_failure: true
+  artifacts:
+    reports:
+      dotenv: miasma.env   # MIASMA_VERDICT / MIASMA_BLOCKING / MIASMA_WAIVABLE
   script:
     - npm install -g miasma-detect
     - miasma-detect-gitlab-ci
@@ -27,6 +38,7 @@ miasma-detect:
   #   MIASMA_MIN_SEVERITY: "medium"
   #   MIASMA_CATEGORIES: "campaign-ioc,package,supply-chain,prompt-injection"
   #   MIASMA_LARGE_DIFF_LINES: "1000"   # flag diffs the UI collapses (0 = off)
+  #   MIASMA_SIGNOFF_MAX_SEVERITY: "high"   # critical is never waivable
   #   MIASMA_EXCLUDE: |
   #     vendor/
   #     **/testdata/
@@ -38,21 +50,34 @@ miasma-detect:
   # needed, and how to unblock. Without it the report goes to the job log only.
   # Set MIASMA_MR_COMMENT: "false" to disable.
 
-# Human sign-off gate (GitLab-native alternative to approval comments):
+# Human sign-off gate (GitLab-native equivalent of /miasma-approve):
 # a maintainer must click ▶ on this job before any later stage runs.
 # - `when: manual` + `allow_failure: false` blocks the pipeline until played.
+# - Playing it with a BLOCKED-but-waivable scan is the acknowledge-and-proceed
+#   waiver: the maintainer has reviewed the report and authorizes processing.
+# - It REFUSES when the scan found unwaivable (critical) findings.
 # - GitLab's own permission model controls who can play it (protect the
 #   environment or use protected branches to restrict to maintainers).
 # - A new push creates a new pipeline where the job is un-played again, so
 #   sign-offs can never go stale — approval always applies to the exact SHA.
-# The job echoes who approved for the audit trail.
+# The job log records who approved what, for the audit trail.
 human-signoff:
   stage: gate
-  needs: [miasma-detect]      # only offered after the scan passes
+  needs: [miasma-detect]
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
   allow_failure: false
   image: registry.access.redhat.com/ubi9/ubi-minimal:latest
   script:
-    - echo "Human sign-off by $GITLAB_USER_LOGIN ($GITLAB_USER_NAME) for $CI_COMMIT_SHA"
+    - |
+      if [ "$MIASMA_WAIVABLE" = "false" ]; then
+        echo "REFUSED: the scan found unwaivable (critical) findings — sign-off cannot override confirmed indicators."
+        echo "Treat this MR as hostile and report it. See the scan job log / MR note for details."
+        exit 1
+      fi
+      if [ "$MIASMA_VERDICT" = "blocked" ]; then
+        echo "Sign-off: $GITLAB_USER_LOGIN ($GITLAB_USER_NAME) reviewed and WAIVED $MIASMA_BLOCKING finding(s) for $CI_COMMIT_SHA"
+      else
+        echo "Sign-off: $GITLAB_USER_LOGIN ($GITLAB_USER_NAME) approved clean scan for $CI_COMMIT_SHA"
+      fi

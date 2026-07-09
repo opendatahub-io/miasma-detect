@@ -87,22 +87,37 @@ on:
   pull_request: { types: [opened, edited, reopened, synchronize] }
   issues: { types: [opened, edited] }
   issue_comment: { types: [created, edited] }
+  push:
+    branches: [main]   # direct-push safety net only — PR branches are covered
+                       # by pull_request:synchronize; scanning branch pushes too
+                       # creates a second, unwaivable red check on the commit
+
+permissions:
+  contents: read
+  pull-requests: write   # report comments on PRs
+  issues: write          # report comments on plain issues
+  actions: write         # lets /miasma-approve re-run the failed PR check
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         with: { fetch-depth: 0 }
-      - uses: your-org/miasma-detect@v1
+      - uses: your-org/miasma-detect@<full-commit-SHA>   # pin per your Actions policy
         with:
           min-severity: medium
-          scan-changed-files: 'true'
+          scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 ```
 
-The action scans the event payload (PR/issue/comment text, commit messages, changed-file names) and, on PRs/pushes, the content of changed files. It emits `::error::` annotations and fails the job on detection. Outputs: `verdict` (`clean`/`blocked`) and `findings` (JSON). Make it a required status check to hard-gate merges and downstream agent workflows.
+The action scans the event payload (PR/issue/comment text, commit messages, changed-file names) and, on PRs/pushes, the names and content of changed files (including collapsed-diff detection). It emits `::error::` annotations and fails the job on detection. Outputs: `verdict` (`clean` / `blocked` / `waived`) and `findings` (JSON). Make it a required status check to hard-gate merges and downstream agent workflows.
 
-**PR report comments.** On detection the action posts one comment on the PR (updated in place on re-runs, marked resolved when the PR comes clean) explaining each finding, the human intervention required, and the steps to unblock — fix and push, maintainer-approved excludes for false positives, then sign-off if enabled. Requires `pull-requests: write` and the default `github-token` input; disable with `pr-comment: 'false'`. Quoted matches in the report are defanged (`[.]`/`[:]`) and the report body is self-scanned before posting, so the comment can never re-trigger this or any other scanner reading comment text. On GitLab, the same report is posted as an MR note when `MIASMA_COMMENT_TOKEN` (project access token, `api` scope) is set; otherwise it appears in the job log.
+Inputs (all optional): `min-severity` (default `medium`), `categories`, `ioc-packs`, `exclude` (gitignore-style patterns), `large-diff-lines` (default `1000`, `0` disables), `scan-changed-files`, `paths`, `pr-comment` (default `true`), `github-token` (defaults to the workflow token), `signoff-command` (default `/miasma-approve`, empty disables waivers), `signoff-max-severity` (default `high`; critical is never waivable).
+
+If your Actions policy requires full-length SHA pins (recommended), remember the pin freezes the scanner version — bump it when the scanner updates, or let Dependabot open the bump PRs. To scan the scanner's own repo without pin churn, use the two-checkout pattern in this repo's own `.github/workflows/miasma-detect.yml`: check out main's copy into a subdirectory and `uses: ./<subdir>` — always current, and a malicious PR can't run its own modified scanner on itself.
+
+**Report comments on PRs and issues.** On detection the action posts one comment (updated in place on re-runs; marked resolved when the content comes clean) explaining each finding, the human intervention required, and how to unblock. PRs get fix-and-push / exclude / sign-off steps; issues get edit-or-close guidance. Comment-triggered runs never overwrite the report for PRs (they're sign-off relays that don't scan PR content), and a clean comment-event run on an issue won't declare it resolved (it can't see earlier comments). Disable with `pr-comment: 'false'`. Quoted matches are defanged (`[.]`/`[:]`) and the report body is self-scanned before posting, so the comment can never re-trigger this or any other scanner reading comment text. On GitLab, the same report is posted as an MR note when `MIASMA_COMMENT_TOKEN` (project access token, `api` scope) is set; otherwise it appears in the job log.
 
 ## Claude Code hook
 
@@ -162,7 +177,7 @@ miasma-detect:
     - miasma-detect-gitlab-ci
 ```
 
-GitLab exposes no event-payload file, so `miasma-detect-gitlab-ci` reads the predefined variables (MR title/description, branch name, commit message) and git-diffs the changed files — including the name-based control-tampering checks (`.miasmaignore`, workflows, agent hooks). It fails the job on detection; put it in a first `gate` stage (or use `needs:`) so build/test/agent jobs never run on blocked content. Configure via CI/CD variables: `MIASMA_MIN_SEVERITY`, `MIASMA_CATEGORIES`, `MIASMA_EXCLUDE`, `MIASMA_IOC_PACKS`, `MIASMA_SCAN_CHANGED_FILES`. It fails **closed** on internal errors.
+GitLab exposes no event-payload file, so `miasma-detect-gitlab-ci` reads the predefined variables (MR title/description, branch name, commit message) and git-diffs the changed files — including the name-based control-tampering checks (`.miasmaignore`, workflows, agent hooks). It fails the job on detection; put it in a first `gate` stage (or use `needs:`) so build/test/agent jobs never run on blocked content. Configure via CI/CD variables: `MIASMA_MIN_SEVERITY`, `MIASMA_CATEGORIES`, `MIASMA_EXCLUDE`, `MIASMA_IOC_PACKS`, `MIASMA_SCAN_CHANGED_FILES`, `MIASMA_LARGE_DIFF_LINES` (collapsed-diff threshold, default `1000`, `0` disables), `MIASMA_COMMENT_TOKEN` (project access token for MR report notes), and `MIASMA_MR_COMMENT` (`false` disables notes). It fails **closed** on internal errors.
 
 For GitLab **webhooks** (e.g. a bot or service consuming merge_request/note/push events), the library's `scanGitlabEvent(payload)` handles GitLab's payload shape, and `scanEvent(payload)` auto-detects GitHub vs GitLab (GitLab sets `object_kind`). The CLI's `--event` flag does the same auto-detection. The same direct-push caveat applies as on GitHub: gate protected branches with merge requests and make this job required.
 
@@ -199,5 +214,5 @@ To cover a new campaign, add a pack under `src/campaigns/` or ship one at runtim
 ## Test
 
 ```bash
-npm test   # 65 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, policy rules, report safety, benign controls, exit codes
+npm test   # 69 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, policy rules, waivers, report safety, benign controls, exit codes
 ```

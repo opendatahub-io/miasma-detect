@@ -47,7 +47,7 @@ inputs:
     required: false
     default: 'high'
   pr-comment:
-    description: 'Post/update a report comment on the PR explaining findings, required human intervention, and how to unblock (needs pull-requests: write)'
+    description: 'Post/update a report comment on the PR or issue explaining findings, required human intervention, and how to unblock (needs pull-requests: write, which also covers issue comments)'
     required: false
     default: 'true'
   github-token:

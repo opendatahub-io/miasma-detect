@@ -23,7 +23,9 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write   # lets the action post its report comment on PRs
+  pull-requests: write   # report comments on PRs
+  issues: write          # report comments on plain issues
+  actions: write         # lets /miasma-approve re-run the failed PR check
 
 jobs:
   scan:
