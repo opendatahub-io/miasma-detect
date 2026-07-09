@@ -6,7 +6,8 @@
   "author": "Ann Marie Fred <afred@redhat.com>",
   "main": "index.js",
   "bin": {
-    "miasma-detect": "src/cli.js"
+    "miasma-detect": "src/cli.js",
+    "miasma-detect-gitlab-ci": "src/gitlab-ci.js"
   },
   "files": [
     "index.js",

@@ -6,7 +6,7 @@ const {
   scanText,
   scanFile,
   scanDir,
-  scanGithubEvent,
+  scanEvent,
   summarize,
   loadPacks,
   SEVERITY_ORDER,
@@ -21,8 +21,9 @@ Built-in campaign packs: ${campaigns.join(', ')}
 Usage:
   miasma-detect [options] <path>...        Scan files and/or directories
   miasma-detect [options] --stdin          Scan text from stdin (PR body, diff, etc.)
-  miasma-detect [options] --event <file>   Scan a GitHub event payload JSON
-                                           (defaults to $GITHUB_EVENT_PATH if set)
+  miasma-detect [options] --event <file>   Scan a GitHub or GitLab webhook/event
+                                           payload JSON (auto-detected; defaults
+                                           to $GITHUB_EVENT_PATH if set)
 
 Options:
   --min-severity <low|medium|high|critical>   Failure threshold (default: medium)
@@ -176,7 +177,7 @@ async function main() {
     } catch (e) {
       fail(`cannot read event payload ${args.event}: ${e.message}`);
     }
-    findings.push(...scanGithubEvent(payload, args.options));
+    findings.push(...scanEvent(payload, args.options));
   }
 
   for (const p of args.paths) {

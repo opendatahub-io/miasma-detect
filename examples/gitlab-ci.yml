@@ -1,0 +1,32 @@
+# Example GitLab CI/CD integration for miasma-detect.
+# Include this job in your .gitlab-ci.yml (or `include:` this file).
+#
+# It runs first, scans MR text surfaces (title, description, branch name,
+# commit message) plus changed files, and fails on detection — so every
+# later stage (build, test, and especially any agentic job) never runs on
+# malicious input. Make later jobs depend on it via stages or `needs:`.
+#
+# GIT_DEPTH: "0" gives the full history needed to diff MR changes.
+
+stages:
+  - gate
+  - build   # your other stages come after the gate
+
+miasma-detect:
+  stage: gate
+  image: registry.access.redhat.com/ubi9/nodejs-20:latest
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - npm install -g miasma-detect
+    - miasma-detect-gitlab-ci
+  # Optional configuration (set as CI/CD variables or here):
+  #   MIASMA_MIN_SEVERITY: "medium"
+  #   MIASMA_CATEGORIES: "campaign-ioc,package,supply-chain,prompt-injection"
+  #   MIASMA_EXCLUDE: |
+  #     vendor/
+  #     **/testdata/
+  #   MIASMA_IOC_PACKS: "packs/new-wave.json"

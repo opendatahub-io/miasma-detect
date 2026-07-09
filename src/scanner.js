@@ -339,6 +339,31 @@ const SUSPICIOUS_COMMIT_FILES = [
   { re: /(?:^|[\/\\])\.coderabbit\.ya?ml$/i, id: 'SC-REVIEWGATE-MODIFIED', desc: '.coderabbit.yaml (AI-review gate config — a PR editing it can disable auto-review gating or pre-merge checks)' },
 ];
 
+/** Check a list of commit objects ({message, added[], modified[]}) against
+ *  SUSPICIOUS_COMMIT_FILES and scan messages. Shared by GitHub/GitLab event scanners. */
+function scanCommitList(commits, surfaces, findings, sourcePrefix) {
+  commits.forEach((c, i) => {
+    if (typeof c.message === 'string' && c.message) {
+      surfaces.push([`${sourcePrefix}[${i}].message`, c.message]);
+    }
+    const files = (c.added || []).concat(c.modified || []);
+    for (const f of files) {
+      for (const sig of SUSPICIOUS_COMMIT_FILES) {
+        if (sig.re.test(f)) {
+          findings.push({
+            ruleId: sig.id,
+            severity: sig.sev || 'high',
+            category: 'supply-chain',
+            description: `Commit adds/modifies ${sig.desc}`,
+            source: `${sourcePrefix}[${i}].files`,
+            match: f,
+          });
+        }
+      }
+    }
+  });
+}
+
 /**
  * Scan a GitHub webhook/Actions event payload (pull_request, issues,
  * issue_comment, push, discussion, etc.). Extracts all human-authored text
@@ -363,30 +388,63 @@ function scanGithubEvent(event, options) {
   push('repository.description', event.repository && event.repository.description);
 
   if (Array.isArray(event.commits)) {
-    event.commits.forEach((c, i) => {
-      push(`commits[${i}].message`, c.message);
-      const files = (c.added || []).concat(c.modified || []);
-      for (const f of files) {
-        for (const sig of SUSPICIOUS_COMMIT_FILES) {
-          if (sig.re.test(f)) {
-            findings.push({
-              ruleId: sig.id,
-              severity: sig.sev || 'high',
-              category: 'supply-chain',
-              description: `Commit adds/modifies ${sig.desc}`,
-              source: `commits[${i}].files`,
-              match: f,
-            });
-          }
-        }
-      }
-    });
+    scanCommitList(event.commits, surfaces, findings, 'commits');
   }
 
   for (const [label, value] of surfaces) {
     findings.push(...scanText(value, label, options));
   }
   return findings;
+}
+
+/**
+ * Scan a GitLab webhook event payload (merge_request, issue, note, push,
+ * etc. — identified by `object_kind`, content under `object_attributes`).
+ * Extracts human-authored text surfaces and inspects push-commit file lists.
+ */
+function scanGitlabEvent(event, options) {
+  const findings = [];
+  const surfaces = [];
+  const push = (label, value) => {
+    if (typeof value === 'string' && value) surfaces.push([label, value]);
+  };
+
+  const kind = event.object_kind || 'event';
+  const oa = event.object_attributes || {};
+  push(`${kind}.title`, oa.title);
+  push(`${kind}.description`, oa.description);
+  push(`${kind}.note`, oa.note);                 // comments on MRs/issues/commits
+  push(`${kind}.source_branch`, oa.source_branch);
+
+  // Note/pipeline events embed the subject they are attached to.
+  if (event.merge_request) {
+    push('merge_request.title', event.merge_request.title);
+    push('merge_request.description', event.merge_request.description);
+    push('merge_request.source_branch', event.merge_request.source_branch);
+  }
+  if (event.issue) {
+    push('issue.title', event.issue.title);
+    push('issue.description', event.issue.description);
+  }
+  push('project.description', event.project && event.project.description);
+  // Push events: ref + commits with file lists (same shape as GitHub's).
+  push('ref', typeof event.ref === 'string' ? event.ref : undefined);
+
+  if (Array.isArray(event.commits)) {
+    scanCommitList(event.commits, surfaces, findings, 'commits');
+  }
+
+  for (const [label, value] of surfaces) {
+    findings.push(...scanText(value, label, options));
+  }
+  return findings;
+}
+
+/** Auto-detect payload provenance and dispatch (GitLab sets object_kind). */
+function scanEvent(event, options) {
+  return event && event.object_kind
+    ? scanGitlabEvent(event, options)
+    : scanGithubEvent(event, options);
 }
 
 /** Summarize findings; verdict fails when any finding >= minSeverity. */
@@ -421,6 +479,9 @@ module.exports = {
   scanDir,
   scanPackageJson,
   scanGithubEvent,
+  scanGitlabEvent,
+  scanEvent,
+  SUSPICIOUS_COMMIT_FILES,
   summarize,
   loadPacks,
   compileExcludes,

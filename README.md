@@ -6,7 +6,7 @@ Point it at a GitHub PR/issue/comment, a diff, a file tree, or any text blob. If
 
 **Built to catch the next wave, not just the last one.** Exact indicators (compromised versions, hashes, marker strings) live in swappable [campaign packs](src/campaigns/); the bulk of the rules target the *techniques* the whole family reuses across waves, so a future campaign with a different name and different actors still trips them. Add a new campaign as a data drop (`--ioc-pack`), not a code change.
 
-Zero dependencies. Node ≥ 18. One codebase, four entry points: CLI, library, GitHub Action, Claude Code hook. For the detection architecture, see [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Zero dependencies. Node ≥ 18. One codebase, five entry points: CLI, library, GitHub Action, GitLab CI/CD job, Claude Code hook. For the detection architecture, see [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## What it detects
 
@@ -143,6 +143,27 @@ Caveats: there is a small race on pushes — if a PR already carries the label f
 
 **Control-tampering defense:** a PR could try to disable these defenses instead of evading them — editing `.miasmaignore` to hide a payload from tree scans, or `.coderabbit.yaml` to remove the gate. The event scanner therefore flags any commit touching either file (`SC-IGNOREFILE-MODIFIED` / `SC-REVIEWGATE-MODIFIED`, high — blocks at the default threshold). Note the Action's changed-files scan never honors the PR branch's `.miasmaignore`; only the workflow-level `exclude:` input (protected by branch rules) applies there.
 
+## GitLab CI/CD
+
+Add the gate job from [`examples/gitlab-ci.yml`](examples/gitlab-ci.yml) to your `.gitlab-ci.yml`:
+
+```yaml
+miasma-detect:
+  stage: gate
+  image: registry.access.redhat.com/ubi9/nodejs-20:latest
+  variables: { GIT_DEPTH: "0" }
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - npm install -g miasma-detect
+    - miasma-detect-gitlab-ci
+```
+
+GitLab exposes no event-payload file, so `miasma-detect-gitlab-ci` reads the predefined variables (MR title/description, branch name, commit message) and git-diffs the changed files — including the name-based control-tampering checks (`.miasmaignore`, workflows, agent hooks). It fails the job on detection; put it in a first `gate` stage (or use `needs:`) so build/test/agent jobs never run on blocked content. Configure via CI/CD variables: `MIASMA_MIN_SEVERITY`, `MIASMA_CATEGORIES`, `MIASMA_EXCLUDE`, `MIASMA_IOC_PACKS`, `MIASMA_SCAN_CHANGED_FILES`. It fails **closed** on internal errors.
+
+For GitLab **webhooks** (e.g. a bot or service consuming merge_request/note/push events), the library's `scanGitlabEvent(payload)` handles GitLab's payload shape, and `scanEvent(payload)` auto-detects GitHub vs GitLab (GitLab sets `object_kind`). The CLI's `--event` flag does the same auto-detection. The same direct-push caveat applies as on GitHub: gate protected branches with merge requests and make this job required.
+
 ## Jenkins / anywhere else
 
 ```groovy
@@ -160,5 +181,5 @@ To cover a new campaign, add a pack under `src/campaigns/` or ship one at runtim
 ## Test
 
 ```bash
-npm test   # 53 tests: IOCs, techniques, injections, packs, excludes, benign controls, CLI/hook exit codes
+npm test   # 58 tests: IOCs, techniques, injections, packs, excludes, GitHub/GitLab events, benign controls, exit codes
 ```

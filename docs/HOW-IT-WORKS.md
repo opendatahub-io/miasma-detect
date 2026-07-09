@@ -46,6 +46,7 @@ Knows the GitHub webhook/Actions payload structure. It extracts every human-auth
 | --- | --- |
 | CLI (`src/cli.js`) | exit code `1`, prints findings + block banner |
 | GitHub Action (`src/action.js`) | fails the job, emits `::error::`/`::warning::` annotations, sets `verdict`/`findings` outputs |
+| GitLab CI job (`src/gitlab-ci.js`) | exit code `1` — fails the pipeline job so downstream stages/agents never run; fails closed on internal errors |
 | Claude Code hook (`hooks/claude-code-hook.js`) | exit code `2` — Claude Code withholds the content and warns the model to stop and report to the user |
 | Library (`summarize().ok`) | returns `false`; caller decides |
 
