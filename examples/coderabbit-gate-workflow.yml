@@ -46,7 +46,7 @@ jobs:
       (github.event.issue.pull_request && contains(github.event.comment.body, '/miasma-approve'))
     runs-on: ubuntu-latest
     container:
-      image: registry.access.redhat.com/ubi9/nodejs-20:latest
+      image: registry.access.redhat.com/ubi9/nodejs-22:latest
     env:
       GH_TOKEN: ${{ github.token }}
       API: ${{ github.api_url }}/repos/${{ github.repository }}
@@ -60,7 +60,7 @@ jobs:
             | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).head.sha))")
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ steps.head.outputs.sha }}
           fetch-depth: 0

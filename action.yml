@@ -54,5 +54,5 @@ outputs:
     description: 'JSON array of findings'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'src/action.js'

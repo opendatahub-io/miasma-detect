@@ -14,7 +14,7 @@ stages:
 
 miasma-detect:
   stage: gate
-  image: registry.access.redhat.com/ubi9/nodejs-20:latest
+  image: registry.access.redhat.com/ubi9/nodejs-22:latest
   variables:
     GIT_DEPTH: "0"
   rules:

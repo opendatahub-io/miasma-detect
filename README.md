@@ -92,7 +92,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with: { fetch-depth: 0 }
       - uses: your-org/miasma-detect@v1
         with:
@@ -152,7 +152,7 @@ Add the gate job from [`examples/gitlab-ci.yml`](examples/gitlab-ci.yml) to your
 ```yaml
 miasma-detect:
   stage: gate
-  image: registry.access.redhat.com/ubi9/nodejs-20:latest
+  image: registry.access.redhat.com/ubi9/nodejs-22:latest
   variables: { GIT_DEPTH: "0" }
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
