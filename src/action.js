@@ -223,17 +223,53 @@ async function main() {
   const summary = summarize(findings, options);
   summary.findings.forEach(annotate);
 
-  // Human sign-off waiver: a maintainer's fresh approval comment can waive
-  // blocking findings up to signoff-max-severity. Critical findings
-  // (confirmed IOCs) can never be waived at the default setting.
   let waivedBy = null;
   const signoffCmd = input('signoff-command', '/miasma-approve');
   const token = input('github-token', process.env.GITHUB_TOKEN || '');
   const api = process.env.GITHUB_API_URL || 'https://api.github.com';
   const base = `${api}/repos/${process.env.GITHUB_REPOSITORY}`;
   const prNumber = prNumberFrom(payload);
+  const isCommentEvent = process.env.GITHUB_EVENT_NAME === 'issue_comment';
 
-  if (!summary.ok && signoffCmd && token && prNumber) {
+  // Comment events are a RELAY, not a judge: they don't check out the PR, so
+  // they must never conclude anything about its content (or touch the report
+  // comment). When the comment is a sign-off, validate it and re-run the
+  // failed PR check — that run recomputes the verdict with full context.
+  if (
+    isCommentEvent &&
+    prNumber &&
+    signoffCmd &&
+    token &&
+    payload.comment &&
+    payload.comment.body &&
+    payload.comment.body.includes(signoffCmd)
+  ) {
+    try {
+      const signoff = await findSignoff(token, base, prNumber, signoffCmd);
+      if (signoff) {
+        const kicked = await rerunPrRun(token, base, signoff.headSha);
+        process.stdout.write(
+          kicked
+            ? `::notice::miasma-detect: sign-off by @${signoff.approver} validated — re-running the PR check to apply it.\n`
+            : '::notice::miasma-detect: sign-off validated but no failed PR run found to re-run (it may already be green).\n'
+        );
+      } else {
+        process.stdout.write(
+          '::notice::miasma-detect: sign-off comment found but not valid — it must come from a user ' +
+            'with write access and postdate the latest commit.\n'
+        );
+      }
+    } catch (e) {
+      process.stdout.write(
+        `::notice::miasma-detect: sign-off relay failed (${e.message}) — re-run the failed PR check manually (needs actions: write).\n`
+      );
+    }
+  }
+
+  // Human sign-off waiver (PR-event runs): a maintainer's fresh approval
+  // comment can waive blocking findings up to signoff-max-severity. Critical
+  // findings (confirmed IOCs) can never be waived at the default setting.
+  if (!summary.ok && !isCommentEvent && signoffCmd && token && prNumber) {
     if (canWaive(summary, input('signoff-max-severity', 'high'))) {
       try {
         const signoff = await findSignoff(token, base, prNumber, signoffCmd);
@@ -244,17 +280,6 @@ async function main() {
             `::notice::miasma-detect: ${summary.blocking} finding(s) acknowledged and waived by ` +
               `@${signoff.approver} via ${signoffCmd} at ${signoff.at}.\n`
           );
-          // Comment-triggered run: also flip the PR's failed check green.
-          if (process.env.GITHUB_EVENT_NAME === 'issue_comment') {
-            try {
-              await rerunPrRun(token, base, signoff.headSha);
-            } catch {
-              process.stdout.write(
-                '::notice::miasma-detect: could not re-run the PR check automatically ' +
-                  '(needs `actions: write`) — re-run the failed check manually to apply the sign-off.\n'
-              );
-            }
-          }
         }
       } catch (e) {
         process.stdout.write(`::notice::miasma-detect: sign-off lookup failed (${e.message})\n`);
@@ -272,7 +297,9 @@ async function main() {
 
   // Post/refresh the human-facing report comment on the PR. A comment
   // failure must never mask the scan verdict.
-  if (input('pr-comment', 'true') === 'true') {
+  // Comment-event runs never write the report comment: they didn't scan the
+  // PR content, so any conclusion they'd post (e.g. "resolved") would be wrong.
+  if (input('pr-comment', 'true') === 'true' && !isCommentEvent) {
     try {
       await upsertPrComment(payload, summary, options, waivedBy);
     } catch (e) {

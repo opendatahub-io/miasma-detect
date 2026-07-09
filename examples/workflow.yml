@@ -17,6 +17,9 @@ on:
   pull_request_review_comment:
     types: [created, edited]
   push:
+    branches: [main]   # direct-push safety net; PR branches are covered by
+                       # pull_request:synchronize (a push-event run on a PR
+                       # branch would add an unwaivable second check)
 
 permissions:
   contents: read
