@@ -377,6 +377,17 @@ test('custom extraPacks adds packages, and marker rules; built-ins still active'
   assert(ids(scanText('Miasma: The Spreading Blight', 't', opts)).includes('MIASMA-MARKER'));
 });
 
+// === Changed-filename checks (PR path — no commits[] in PR payloads) =======
+test('scanChangedFilename flags agent-config and control files by name alone', () => {
+  const { scanChangedFilename } = require('../index');
+  assert(ids(scanChangedFilename('.claude/skills/foo/SKILL.md')).includes('SC-AGENT-HOOK-ADDED'));
+  assert(ids(scanChangedFilename('.vscode/settings.json')).includes('SC-VSCODE-DIR-ADDED'));
+  assert(ids(scanChangedFilename('.miasmaignore')).includes('SC-IGNOREFILE-MODIFIED'));
+  assert(ids(scanChangedFilename('.github/workflows/ci.yml')).includes('SC-WORKFLOW-ADDED'));
+  assert.strictEqual(scanChangedFilename('src/index.js').length, 0);
+  assert.strictEqual(scanChangedFilename('docs/README.md').length, 0);
+});
+
 // === PR/MR report comment ==================================================
 test('buildReport explains findings, intervention, and unblock path', () => {
   const { buildReport, MARKER } = require('../src/report');

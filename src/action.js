@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { scanGithubEvent, scanFile, summarize, loadPacks, compileExcludes, isExcluded } = require('./scanner');
+const { scanGithubEvent, scanFile, scanChangedFilename, summarize, loadPacks, compileExcludes, isExcluded } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
 
 async function gh(token, method, url, body) {
@@ -151,6 +151,9 @@ async function main() {
     for (const f of changedFileStats()) {
       if (isExcluded(f.file, false, compiledExcludes)) continue;
       if (threshold > 0 && f.lines >= threshold) findings.push(largeDiffFinding(f, threshold));
+      // Name-based checks (.claude/, .vscode/, workflows, .miasmaignore, …)
+      // — PR payloads carry no commits[] list, so this is where PRs get them.
+      findings.push(...scanChangedFilename(f.file));
       if (fs.existsSync(f.file)) findings.push(...scanFile(f.file, options));
     }
   }

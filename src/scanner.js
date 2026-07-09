@@ -348,6 +348,29 @@ const SUSPICIOUS_COMMIT_FILES = [
   { re: /(?:^|[\/\\])(?:\.gitlab-ci\.ya?ml|Jenkinsfile|\.circleci[\/\\]config\.ya?ml|azure-pipelines\.ya?ml|\.drone\.ya?ml|\.travis\.ya?ml|cloudbuild\.ya?ml)$/i, id: 'SC-CI-CONFIG-MODIFIED', desc: 'CI/CD pipeline configuration (InfoSec policy: review every pipeline change with extreme care)', sev: 'medium' },
 ];
 
+/**
+ * Name-based checks for a single changed file path. Returns findings for
+ * propagation/persistence/control-tampering filenames (.claude/, .vscode/,
+ * workflows, .miasmaignore, …) regardless of file content. Used by both CI
+ * entries and the event scanners so PR/MR file lists get identical coverage.
+ */
+function scanChangedFilename(file, source) {
+  const findings = [];
+  for (const sig of SUSPICIOUS_COMMIT_FILES) {
+    if (sig.re.test(file)) {
+      findings.push({
+        ruleId: sig.id,
+        severity: sig.sev || 'high',
+        category: 'supply-chain',
+        description: `Change adds/modifies ${sig.desc}`,
+        source: source || 'changed-files',
+        match: file,
+      });
+    }
+  }
+  return findings;
+}
+
 /** Check a list of commit objects ({message, added[], modified[]}) against
  *  SUSPICIOUS_COMMIT_FILES and scan messages. Shared by GitHub/GitLab event scanners. */
 function scanCommitList(commits, surfaces, findings, sourcePrefix) {
@@ -357,18 +380,7 @@ function scanCommitList(commits, surfaces, findings, sourcePrefix) {
     }
     const files = (c.added || []).concat(c.modified || []);
     for (const f of files) {
-      for (const sig of SUSPICIOUS_COMMIT_FILES) {
-        if (sig.re.test(f)) {
-          findings.push({
-            ruleId: sig.id,
-            severity: sig.sev || 'high',
-            category: 'supply-chain',
-            description: `Commit adds/modifies ${sig.desc}`,
-            source: `${sourcePrefix}[${i}].files`,
-            match: f,
-          });
-        }
-      }
+      findings.push(...scanChangedFilename(f, `${sourcePrefix}[${i}].files`));
     }
   });
 }
@@ -490,6 +502,7 @@ module.exports = {
   scanGithubEvent,
   scanGitlabEvent,
   scanEvent,
+  scanChangedFilename,
   SUSPICIOUS_COMMIT_FILES,
   summarize,
   loadPacks,

@@ -31,11 +31,11 @@ const { execFileSync } = require('child_process');
 const {
   scanText,
   scanFile,
+  scanChangedFilename,
   summarize,
   loadPacks,
   compileExcludes,
   isExcluded,
-  SUSPICIOUS_COMMIT_FILES,
 } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
 
@@ -161,18 +161,7 @@ async function main() {
           match: `${f} (${stat.lines} lines)`,
         });
       }
-      for (const sig of SUSPICIOUS_COMMIT_FILES) {
-        if (sig.re.test(f)) {
-          findings.push({
-            ruleId: sig.id,
-            severity: sig.sev || 'high',
-            category: 'supply-chain',
-            description: `Change adds/modifies ${sig.desc}`,
-            source: 'changed-files',
-            match: f,
-          });
-        }
-      }
+      findings.push(...scanChangedFilename(f));
       if (fs.existsSync(f)) findings.push(...scanFile(f, options));
     }
   }
