@@ -22,6 +22,12 @@
  *   MIASMA_COMMENT_TOKEN       project access token (api scope, Reporter+) used
  *                              to post the report as an MR comment
  *   MIASMA_MR_COMMENT          "false" to disable MR comments (default: true)
+ *   MIASMA_SIGNOFF_MAX_SEVERITY  highest severity a manual sign-off may waive
+ *                              (default: high — critical is never waivable)
+ *
+ * Verdict export: writes miasma.env (dotenv) with MIASMA_VERDICT,
+ * MIASMA_BLOCKING, and MIASMA_WAIVABLE so a downstream manual sign-off job
+ * (see examples/gitlab-ci.yml) can gate on it and refuse unwaivable blocks.
  *
  * Requires GIT_DEPTH: "0" (or a sufficiently deep clone) for MR diffs.
  */
@@ -33,6 +39,7 @@ const {
   scanFile,
   scanChangedFilename,
   summarize,
+  canWaive,
   loadPacks,
   compileExcludes,
   isExcluded,
@@ -65,7 +72,7 @@ async function upsertMrNote(summary) {
     platform: 'gitlab',
     runUrl: env.CI_JOB_URL || null,
     signoff:
-      'If the manual sign-off gate is enabled: after the scan passes, a maintainer plays the `human-signoff` job on this pipeline to authorize downstream stages. New pushes reset the sign-off.',
+      'If the manual sign-off gate is enabled: after reviewing the findings, a maintainer plays the `human-signoff` job on this pipeline to acknowledge them and authorize downstream stages. The job refuses when unwaivable (critical) findings are present, and new pushes reset the sign-off.',
   };
 
   const listRes = await fetch(`${base}?per_page=100`, { headers });
@@ -181,6 +188,21 @@ async function main() {
     await upsertMrNote(summary);
   } catch (e) {
     process.stdout.write(`miasma-detect: could not post MR note (${e.message})\n`);
+  }
+
+  // Export the verdict for downstream jobs (dotenv artifact). The manual
+  // human-signoff job gates on MIASMA_WAIVABLE so critical findings can
+  // never be signed off.
+  const waivable = summary.ok || canWaive(summary, env.MIASMA_SIGNOFF_MAX_SEVERITY || 'high');
+  try {
+    fs.writeFileSync(
+      'miasma.env',
+      `MIASMA_VERDICT=${summary.ok ? 'clean' : 'blocked'}\n` +
+        `MIASMA_BLOCKING=${summary.blocking}\n` +
+        `MIASMA_WAIVABLE=${waivable}\n`
+    );
+  } catch (e) {
+    process.stdout.write(`miasma-detect: could not write miasma.env (${e.message})\n`);
   }
 
   if (!summary.ok) {
