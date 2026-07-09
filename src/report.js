@@ -71,13 +71,23 @@ function severityIcon(sev) {
 function buildReport(summary, ctx = {}) {
   const lines = [];
   lines.push(MARKER);
-  lines.push('## 🛑 miasma-detect blocked this change');
-  lines.push('');
-  lines.push(
-    `The security scan found **${summary.blocking} finding(s)** at or above the failure threshold ` +
-      `(max severity: **${summary.maxSeverity}**). AI/agent processing and downstream automation are ` +
-      'halted until a human resolves this.'
-  );
+  if (ctx.waivedBy) {
+    lines.push('## ⚠️ miasma-detect: findings acknowledged by human sign-off');
+    lines.push('');
+    lines.push(
+      `**@${ctx.waivedBy.approver}** reviewed and waived **${summary.blocking} finding(s)** ` +
+        `(max severity: **${summary.maxSeverity}**) at ${ctx.waivedBy.at}. The check passes; ` +
+        'the findings remain listed below for the audit trail. A new push re-locks the PR.'
+    );
+  } else {
+    lines.push('## 🛑 miasma-detect blocked this change');
+    lines.push('');
+    lines.push(
+      `The security scan found **${summary.blocking} finding(s)** at or above the failure threshold ` +
+        `(max severity: **${summary.maxSeverity}**). AI/agent processing and downstream automation are ` +
+        'halted until a human resolves this.'
+    );
+  }
   lines.push('');
   lines.push('### What was found');
   lines.push('');
@@ -106,14 +116,16 @@ function buildReport(summary, ctx = {}) {
     }
   }
   lines.push('');
-  lines.push('### How to get past this gate');
-  lines.push('');
-  lines.push('1. Review every finding above; fix or remove the flagged content and push a new commit — the gate re-runs automatically.');
-  lines.push(
-    '2. For false positives, have a maintainer add an exclude pattern (workflow/job `exclude` input, or `.miasmaignore` for tree scans). Note that editing `.miasmaignore` is itself flagged — by design — so that change gets maintainer review too.'
-  );
-  if (ctx.signoff) {
-    lines.push(`3. ${ctx.signoff}`);
+  if (!ctx.waivedBy) {
+    lines.push('### How to get past this gate');
+    lines.push('');
+    lines.push('1. Review every finding above; fix or remove the flagged content and push a new commit — the gate re-runs automatically.');
+    lines.push(
+      '2. For false positives, have a maintainer add an exclude pattern (workflow/job `exclude` input, or `.miasmaignore` for tree scans). Note that editing `.miasmaignore` is itself flagged — by design — so that change gets maintainer review too.'
+    );
+    if (ctx.signoff) {
+      lines.push(`3. ${ctx.signoff}`);
+    }
   }
   if (ctx.runUrl) {
     lines.push('');

@@ -468,6 +468,19 @@ function scanEvent(event, options) {
     : scanGithubEvent(event, options);
 }
 
+/**
+ * Whether a blocked summary is eligible for a human sign-off waiver:
+ * true when every blocking finding is at or below maxSeverity. Findings
+ * above it (default: critical, i.e. confirmed IOCs) can never be waived.
+ */
+function canWaive(summary, maxSeverity) {
+  const max = SEVERITY_ORDER[maxSeverity] ?? SEVERITY_ORDER.high;
+  const threshold = summary.findings.filter(
+    (f) => SEVERITY_ORDER[f.severity] > max
+  );
+  return threshold.length === 0;
+}
+
 /** Summarize findings; verdict fails when any finding >= minSeverity. */
 function summarize(findings, options) {
   const opts = Object.assign({}, DEFAULT_OPTIONS, options);
@@ -505,6 +518,7 @@ module.exports = {
   scanChangedFilename,
   SUSPICIOUS_COMMIT_FILES,
   summarize,
+  canWaive,
   loadPacks,
   compileExcludes,
   isExcluded,

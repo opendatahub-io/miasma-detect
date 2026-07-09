@@ -388,6 +388,30 @@ test('scanChangedFilename flags agent-config and control files by name alone', (
   assert.strictEqual(scanChangedFilename('docs/README.md').length, 0);
 });
 
+// === Sign-off waiver eligibility ===========================================
+test('canWaive allows high-and-below, never critical', () => {
+  const { canWaive } = require('../index');
+  const high = summarize(scanText('run: echo ${{ github.event.issue.body }}', 't')); // SC-WORKFLOW-INJECTION high
+  assert(canWaive(high, 'high'));
+  const critical = summarize(scanText('Miasma: The Spreading Blight', 't'));
+  assert(!canWaive(critical, 'high'));
+  const mixed = summarize([...high.findings, ...critical.findings]);
+  assert(!canWaive(mixed, 'high'));
+  assert(!canWaive(high, 'medium'), 'high finding must not be waivable when max is medium');
+});
+
+test('waived report renders acknowledgment and stays scanner-safe', () => {
+  const { buildReport } = require('../src/report');
+  const s = summarize(scanText('+++ b/.vscode/settings.json touched', 't').concat([
+    { ruleId: 'SC-VSCODE-DIR-ADDED', severity: 'high', category: 'supply-chain', description: 'x', source: 'changed-files', match: '.vscode/settings.json' },
+  ]));
+  const body = buildReport(s, { waivedBy: { approver: 'amfred', at: '2026-07-09T12:00:00Z' } });
+  assert(body.includes('acknowledged by human sign-off'));
+  assert(body.includes('@amfred'));
+  assert(!body.includes('How to get past this gate'));
+  assert(summarize(scanText(body, 'comment.body')).ok);
+});
+
 // === PR/MR report comment ==================================================
 test('buildReport explains findings, intervention, and unblock path', () => {
   const { buildReport, MARKER } = require('../src/report');
