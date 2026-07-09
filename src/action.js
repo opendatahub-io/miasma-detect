@@ -78,11 +78,20 @@ async function gh(token, method, url, body) {
   return res.status === 204 ? null : res.json();
 }
 
-/** Upsert the report comment on the PR (one comment, updated in place). */
-async function upsertPrComment(payload, summary, options, waivedBy) {
+/**
+ * Upsert the report comment on the PR or plain issue (one comment, updated
+ * in place). For plain issues, a clean verdict only rewrites the report to
+ * "resolved" on `issues` events (opened/edited — where the payload carries
+ * the issue body); a clean comment-event run doesn't see earlier comments,
+ * so it must not declare the issue resolved.
+ */
+async function upsertReportComment(payload, summary, options, waivedBy) {
   const token = input('github-token', process.env.GITHUB_TOKEN || '');
   const prNumber = prNumberFrom(payload);
-  if (!prNumber) return; // push/other events have no PR to comment on
+  const issueNumber =
+    payload.issue && !payload.issue.pull_request ? payload.issue.number : null;
+  const targetNumber = prNumber || issueNumber;
+  if (!targetNumber) return; // push/other events have nowhere to comment
   if (!token) {
     process.stdout.write(
       '::notice::miasma-detect: no github-token input — cannot post the PR report comment. ' +
@@ -100,20 +109,27 @@ async function upsertPrComment(payload, summary, options, waivedBy) {
     platform: 'github',
     runUrl,
     waivedBy,
-    signoff: signoffCmd
-      ? `After reviewing the findings above, a maintainer (write/admin) comments \`${signoffCmd}\` to acknowledge them and unblock — the check re-runs and passes. Approvals from before the latest commit don't count, and critical findings can never be waived this way.`
-      : null,
+    kind: prNumber ? 'pr' : 'issue',
+    signoff:
+      prNumber && signoffCmd
+        ? `After reviewing the findings above, a maintainer (write/admin) comments \`${signoffCmd}\` to acknowledge them and unblock — the check re-runs and passes. Approvals from before the latest commit don't count, and critical findings can never be waived this way.`
+        : null,
   };
 
-  const comments = await gh(token, 'GET', `${base}/issues/${prNumber}/comments?per_page=100`);
+  const comments = await gh(token, 'GET', `${base}/issues/${targetNumber}/comments?per_page=100`);
   const existing = comments.find((c) => c.body && c.body.includes(MARKER));
 
   if (!summary.ok || waivedBy) {
     const body = buildReport(summary, ctx);
     if (existing) await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body });
-    else await gh(token, 'POST', `${base}/issues/${prNumber}/comments`, { body });
+    else await gh(token, 'POST', `${base}/issues/${targetNumber}/comments`, { body });
   } else if (existing) {
-    await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body: buildResolved(ctx) });
+    // Clean: mark resolved — but a clean *comment-event* run on a plain
+    // issue never saw earlier comments, so it isn't qualified to say so.
+    const qualified = prNumber || process.env.GITHUB_EVENT_NAME === 'issues';
+    if (qualified) {
+      await gh(token, 'PATCH', `${base}/issues/comments/${existing.id}`, { body: buildResolved(ctx) });
+    }
   }
 }
 
@@ -297,13 +313,15 @@ async function main() {
 
   // Post/refresh the human-facing report comment on the PR. A comment
   // failure must never mask the scan verdict.
-  // Comment-event runs never write the report comment: they didn't scan the
-  // PR content, so any conclusion they'd post (e.g. "resolved") would be wrong.
-  if (input('pr-comment', 'true') === 'true' && !isCommentEvent) {
+  // PR comment-events never write the report comment: they're sign-off
+  // relays that didn't scan the PR content. Plain-issue comment events DO
+  // write when blocked — the payload carries the issue body + the new
+  // comment, which is the content in question.
+  if (input('pr-comment', 'true') === 'true' && !(isCommentEvent && prNumber)) {
     try {
-      await upsertPrComment(payload, summary, options, waivedBy);
+      await upsertReportComment(payload, summary, options, waivedBy);
     } catch (e) {
-      process.stdout.write(`::notice::miasma-detect: could not post PR comment (${e.message})\n`);
+      process.stdout.write(`::notice::miasma-detect: could not post report comment (${e.message})\n`);
     }
   }
 

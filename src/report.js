@@ -116,7 +116,13 @@ function buildReport(summary, ctx = {}) {
     }
   }
   lines.push('');
-  if (!ctx.waivedBy) {
+  if (!ctx.waivedBy && ctx.kind === 'issue') {
+    lines.push('### What to do next');
+    lines.push('');
+    lines.push('1. If you authored the flagged content, edit the issue or comment to remove it — the scan re-runs on edit and this report updates.');
+    lines.push('2. If you did not author it, treat it as hostile: keep AI/agent tooling away from this issue, delete the offending comment or close the issue, and report it to your security contact.');
+    lines.push('3. For false positives in legitimate security discussion, describe indicators rather than quoting exact marker strings, versions, or paths.');
+  } else if (!ctx.waivedBy) {
     lines.push('### How to get past this gate');
     lines.push('');
     lines.push('1. Review every finding above; fix or remove the flagged content and push a new commit — the gate re-runs automatically.');
