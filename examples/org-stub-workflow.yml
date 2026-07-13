@@ -1,0 +1,44 @@
+# Per-repo stub for org-wide miasma-detect deployment.
+# Copy to .github/workflows/miasma-detect.yml in each repo. All real logic
+# lives in the reusable workflow (amfred/miasma-detect/.github/workflows/
+# reusable-scan.yml); this stub only wires up events and permissions.
+#
+# To roll out an update org-wide: change the reusable workflow once, then bump
+# the pinned SHA below in each repo (Dependabot understands this and will open
+# the bump PRs for you). Keep it a full-length SHA per supply-chain policy.
+
+name: miasma-detect
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+  push:
+    branches: [main]   # direct-push audit trail; PR branches are covered by
+                       # pull_request:synchronize
+
+# Permissions are set by the caller and flow into the reusable workflow
+# (a called workflow can only lower them, never raise). These are the minimum
+# the scan + report-comment + label + sign-off-rerun features need.
+permissions:
+  contents: read
+  pull-requests: write   # report comments on PRs + gate label
+  issues: write          # report comments on issues
+  actions: write         # /miasma-approve can re-run the failed PR check
+
+jobs:
+  miasma-detect:
+    uses: amfred/miasma-detect/.github/workflows/reusable-scan.yml@PINNED_SHA
+    # Optional overrides — omit to accept the org defaults:
+    with:
+      min-severity: medium
+      large-diff-lines: '1000'
+      # exclude: |
+      #   vendor/
+      #   **/testdata/
+      # manage-coderabbit-label: true   # set false if not using the CodeRabbit gate

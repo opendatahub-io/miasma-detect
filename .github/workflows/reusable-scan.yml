@@ -1,0 +1,109 @@
+# Reusable miasma-detect workflow for organization-wide deployment.
+#
+# Centralizes all scan + CodeRabbit-gate logic in one place. Each repo in the
+# org drops in a ~15-line stub (see examples/org-stub-workflow.yml) that calls
+# this via `uses:` and subscribes to the events it wants. Update the org's
+# scanning behavior by changing THIS file and bumping the pinned SHA in the
+# stubs (or let Dependabot do it).
+#
+# Unlike GitHub "required workflows" (PR-events only), the stub keeps full
+# event coverage — issues, issue_comment (/miasma-approve waivers), and push
+# — because the caller's event context flows into this reusable workflow.
+
+name: miasma-detect (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      min-severity:
+        description: 'Failure threshold: low | medium | high | critical'
+        type: string
+        default: 'medium'
+      large-diff-lines:
+        description: 'Flag diffs at/above this many lines (collapsed by the UI). 0 disables.'
+        type: string
+        default: '1000'
+      categories:
+        description: 'Comma-separated rule categories (default: all)'
+        type: string
+        default: ''
+      exclude:
+        description: 'Newline-separated gitignore-style paths to skip'
+        type: string
+        default: ''
+      ioc-packs:
+        description: 'Newline/comma-separated extra IOC pack JSON paths'
+        type: string
+        default: ''
+      pr-comment:
+        description: 'Post/update the report comment on PRs and issues'
+        type: string
+        default: 'true'
+      signoff-command:
+        description: 'Comment command that waives reviewed findings (empty disables)'
+        type: string
+        default: '/miasma-approve'
+      signoff-max-severity:
+        description: 'Highest severity a sign-off may waive (critical is never waivable)'
+        type: string
+        default: 'high'
+      gate-label:
+        description: 'Label used to gate CodeRabbit auto-review'
+        type: string
+        default: 'miasma-clean'
+      manage-coderabbit-label:
+        description: 'Revoke-before-scan / grant-after-clean the gate label for the CodeRabbit gate'
+        type: boolean
+        default: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      API: ${{ github.api_url }}/repos/${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      GATE_LABEL: ${{ inputs.gate-label }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5 (Node 24)
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          fetch-depth: 0
+
+      # Revoke the CodeRabbit gate label BEFORE scanning, so CodeRabbit never
+      # reviews content that hasn't been re-scanned.
+      - name: Revoke CodeRabbit gate label
+        if: ${{ inputs.manage-coderabbit-label && github.event_name == 'pull_request' }}
+        run: |
+          curl -sf -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API/issues/$PR/labels/$GATE_LABEL" \
+            || true   # 404 when label absent — fine
+
+      # Scan. Fails the job on detection (unless waived via the sign-off command).
+      # NOTE: keep this action pin in sync with the SHA the stubs pin this
+      # reusable workflow to — both live in this repo and move together.
+      - name: Miasma detect
+        uses: amfred/miasma-detect@PINNED_ACTION_SHA
+        with:
+          min-severity: ${{ inputs.min-severity }}
+          large-diff-lines: ${{ inputs.large-diff-lines }}
+          categories: ${{ inputs.categories }}
+          exclude: ${{ inputs.exclude }}
+          ioc-packs: ${{ inputs.ioc-packs }}
+          pr-comment: ${{ inputs.pr-comment }}
+          signoff-command: ${{ inputs.signoff-command }}
+          signoff-max-severity: ${{ inputs.signoff-max-severity }}
+          scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+      # Clean or waived — apply the label so CodeRabbit's positive label match
+      # triggers its review of the now-cleared content.
+      - name: Grant CodeRabbit gate label
+        if: ${{ inputs.manage-coderabbit-label && github.event_name == 'pull_request' }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"labels\":[\"$GATE_LABEL\"]}" \
+            "$API/issues/$PR/labels"
