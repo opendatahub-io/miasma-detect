@@ -160,6 +160,27 @@ Caveats: there is a small race on pushes — if a PR already carries the label f
 
 **Control-tampering defense:** a PR could try to disable these defenses instead of evading them — editing `.miasmaignore` to hide a payload from tree scans, or `.coderabbit.yaml` to remove the gate. The event scanner therefore flags any commit touching either file (`SC-IGNOREFILE-MODIFIED` / `SC-REVIEWGATE-MODIFIED`, high — blocks at the default threshold). Note the Action's changed-files scan never honors the PR branch's `.miasmaignore`; only the workflow-level `exclude:` input (protected by branch rules) applies there.
 
+## Organization-wide deployment
+
+To enforce the scan (and the CodeRabbit gate) across many repos without copying logic into each, use the reusable workflow. All logic lives in [`.github/workflows/reusable-scan.yml`](.github/workflows/reusable-scan.yml); each repo gets a ~15-line stub ([`examples/org-stub-workflow.yml`](examples/org-stub-workflow.yml) → `.github/workflows/miasma-detect.yml`) that calls it:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: write
+jobs:
+  miasma-detect:
+    uses: your-org/miasma-detect/.github/workflows/reusable-scan.yml@<full-sha>
+    with:
+      min-severity: medium
+```
+
+Update behavior org-wide by editing the reusable workflow once, then bumping the pinned SHA in the stubs (Dependabot opens those PRs automatically). The CodeRabbit gate config itself belongs in your org's `.github/.coderabbit.yaml` (the org-default all repos inherit); protect it with a push ruleset, since a repo-level `.coderabbit.yaml` overrides org settings.
+
+Why a stub-and-reusable-workflow rather than GitHub's native "required workflows"? Required workflows only trigger on `pull_request` events, which would drop issue scanning, the direct-push audit trail, and the `issue_comment`-based `/miasma-approve` waiver. The stub subscribes to all of those and the caller's event context flows into the reusable workflow, preserving the full feature set. (Because the reusable workflow references the published action by SHA, keep that pin in sync with the SHA the stubs use — both live in this repo and move together per release.)
+
 ## GitLab CI/CD
 
 Add the gate job from [`examples/gitlab-ci.yml`](examples/gitlab-ci.yml) to your `.gitlab-ci.yml`:
