@@ -1,0 +1,14 @@
+# Code owners for miasma-detect.
+# Syntax: <path pattern>  <owner(s)>
+# The last matching pattern wins. Owners are auto-requested for review on PRs
+# touching matching files (enforced only if "Require review from Code Owners"
+# is enabled in the branch ruleset).
+
+# Default owner for everything.
+* @amfred
+
+# Security-sensitive surfaces — keep an explicit owner even as the list grows.
+/src/            @amfred
+/action.yml      @amfred
+/.github/        @amfred
+/SECURITY.md     @amfred
