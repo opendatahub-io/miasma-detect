@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         with: { fetch-depth: 0 }
-      - uses: your-org/miasma-detect@<full-commit-SHA>   # pin per your Actions policy
+      - uses: amfred/miasma-detect@<full-commit-SHA>   # pin per your Actions policy
         with:
           min-severity: medium
           scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
@@ -172,7 +172,7 @@ permissions:
   actions: write
 jobs:
   miasma-detect:
-    uses: your-org/miasma-detect/.github/workflows/reusable-scan.yml@<full-sha>
+    uses: amfred/miasma-detect/.github/workflows/reusable-scan.yml@<full-sha>
     with:
       min-severity: medium
 ```

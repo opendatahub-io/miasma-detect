@@ -43,7 +43,7 @@ jobs:
           fetch-depth: 0
 
       - name: Miasma detect
-        uses: ann-marie/miasma-detect@v1   # or `uses: ./` if vendored in-repo
+        uses: amfred/miasma-detect@<full-commit-SHA>   # or `uses: ./` if vendored in-repo
         with:
           min-severity: medium
           scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
