@@ -4,11 +4,11 @@
 # touching matching files (enforced only if "Require review from Code Owners"
 # is enabled in the branch ruleset).
 
-# Default owner for everything.
-* @amfred
+# Default owners for everything.
+* @amfred @lphiri @ugiordan
 
-# Security-sensitive surfaces — keep an explicit owner even as the list grows.
-/src/            @amfred
-/action.yml      @amfred
-/.github/        @amfred
-/SECURITY.md     @amfred
+# Security-sensitive surfaces — keep explicit owners even as the list grows.
+/src/            @amfred @lphiri @ugiordan
+/action.yml      @amfred @lphiri @ugiordan
+/.github/        @amfred @lphiri @ugiordan
+/SECURITY.md     @amfred @lphiri @ugiordan
