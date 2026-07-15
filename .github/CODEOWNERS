@@ -5,10 +5,10 @@
 # is enabled in the branch ruleset).
 
 # Default owners for everything.
-* @amfred @lphiri @ugiordan
+* @amfred @lphiri @ugiordan @etirelli
 
 # Security-sensitive surfaces — keep explicit owners even as the list grows.
-/src/            @amfred @lphiri @ugiordan
-/action.yml      @amfred @lphiri @ugiordan
-/.github/        @amfred @lphiri @ugiordan
-/SECURITY.md     @amfred @lphiri @ugiordan
+/src/            @amfred @lphiri @ugiordan @etirelli
+/action.yml      @amfred @lphiri @ugiordan @etirelli
+/.github/        @amfred @lphiri @ugiordan @etirelli
+/SECURITY.md     @amfred @lphiri @ugiordan @etirelli
