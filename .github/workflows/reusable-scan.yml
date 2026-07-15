@@ -85,7 +85,7 @@ jobs:
       # NOTE: keep this action pin in sync with the SHA the stubs pin this
       # reusable workflow to — both live in this repo and move together.
       - name: Miasma detect
-        uses: amfred/miasma-detect@PINNED_ACTION_SHA
+        uses: opendatahub-io/miasma-detect@PINNED_ACTION_SHA
         with:
           min-severity: ${{ inputs.min-severity }}
           large-diff-lines: ${{ inputs.large-diff-lines }}

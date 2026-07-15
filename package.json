@@ -4,6 +4,14 @@
   "description": "Detect Shai-Hulud/Miasma-family npm supply-chain worms via campaign IOCs, generic family-technique heuristics, and prompt-injection patterns in GitHub PRs/issues, files, and diffs. Fails fast so coding agents stop processing.",
   "license": "Apache-2.0",
   "author": "Ann Marie Fred <afred@redhat.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opendatahub-io/miasma-detect.git"
+  },
+  "homepage": "https://github.com/opendatahub-io/miasma-detect#readme",
+  "bugs": {
+    "url": "https://github.com/opendatahub-io/miasma-detect/issues"
+  },
   "main": "index.js",
   "bin": {
     "miasma-detect": "src/cli.js",

@@ -1,6 +1,6 @@
 # Per-repo stub for org-wide miasma-detect deployment.
 # Copy to .github/workflows/miasma-detect.yml in each repo. All real logic
-# lives in the reusable workflow (amfred/miasma-detect/.github/workflows/
+# lives in the reusable workflow (opendatahub-io/miasma-detect/.github/workflows/
 # reusable-scan.yml); this stub only wires up events and permissions.
 #
 # To roll out an update org-wide: change the reusable workflow once, then bump
@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   miasma-detect:
-    uses: amfred/miasma-detect/.github/workflows/reusable-scan.yml@PINNED_SHA
+    uses: opendatahub-io/miasma-detect/.github/workflows/reusable-scan.yml@PINNED_SHA
     # Optional overrides — omit to accept the org defaults:
     with:
       min-severity: medium
