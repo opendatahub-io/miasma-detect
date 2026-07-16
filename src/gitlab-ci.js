@@ -43,6 +43,7 @@ const {
   loadPacks,
   compileExcludes,
   isExcluded,
+  lineRange,
 } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
 
@@ -177,7 +178,7 @@ async function main() {
   for (const f of summary.findings) {
     process.stdout.write(
       `[${f.severity.toUpperCase()}] ${f.ruleId} (${f.category})\n  ${f.description}\n` +
-        `  source: ${f.source}\n` +
+        `  source: ${f.source}${lineRange(f) ? ':' + lineRange(f) : ''}\n` +
         (f.match ? `  match:  ${f.match}\n` : '')
     );
   }

@@ -11,7 +11,7 @@
  * matches a rule is redacted. The report can never re-trigger the scanner.
  */
 
-const { scanText } = require('./scanner');
+const { scanText, lineRange } = require('./scanner');
 
 const MARKER = '<!-- miasma-detect-report -->';
 const RESOLVED_MARKER = '<!-- miasma-detect-report:resolved -->';
@@ -94,9 +94,12 @@ function buildReport(summary, ctx = {}) {
   lines.push('| | Rule | Where | Detail |');
   lines.push('|---|---|---|---|');
   for (const f of summary.findings.slice(0, 25)) {
-    const detail = defang(f.match || f.excerpt || '');
+    // Collapse whitespace/newlines so a multi-line match can't break the table row.
+    const detail = defang((f.match || f.excerpt || '').replace(/\s+/g, ' ').trim());
+    const lr = lineRange(f);
+    const where = defang(f.source) + (lr ? `:${lr}` : '');
     lines.push(
-      `| ${severityIcon(f.severity)} ${f.severity} | \`${f.ruleId}\` | \`${defang(f.source)}\` | ${f.description.split('\n')[0]}${detail ? ` — \`${detail}\`` : ''} |`
+      `| ${severityIcon(f.severity)} ${f.severity} | \`${f.ruleId}\` | \`${where}\` | ${f.description.split('\n')[0]}${detail ? ` — \`${detail}\`` : ''} |`
     );
   }
   if (summary.findings.length > 25) {

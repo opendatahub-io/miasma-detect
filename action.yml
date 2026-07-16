@@ -65,10 +65,20 @@ inputs:
     description: 'Token used to post the PR report comment'
     required: false
     default: ${{ github.token }}
+  report-artifact-dir:
+    description: >-
+      If set, write the rendered report (report.md) and metadata (meta.json)
+      to this directory instead of relying only on the direct comment POST.
+      Used with the fork-safe workflow_run pattern (see examples/fork-safe-*.yml)
+      so a companion workflow with a write token can comment on fork PRs, where
+      this run''s token is read-only. Pair with pr-comment: ''false'' to avoid
+      double comments on same-repo PRs.
+    required: false
+    default: ''
 
 outputs:
   verdict:
-    description: '"clean" or "blocked"'
+    description: '"clean", "blocked", or "waived"'
   findings:
     description: 'JSON array of findings'
 
