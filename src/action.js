@@ -236,6 +236,36 @@ async function main() {
     }
   }
 
+  // Trusted-bots: downgrade structural findings for verified bot PRs.
+  // Campaign IOCs and critical findings keep their original severity.
+  const TRUSTED_DOWNGRADE_RULES = new Set([
+    'SC-WORKFLOW-ADDED', 'PI-UNICODE-TRICKERY', 'SC-COLLAPSED-DIFF',
+  ]);
+  const trustedBotEntries = input('trusted-bots', '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const trustedBotIds = new Set(trustedBotEntries.filter((e) => /^\d+$/.test(e)));
+  const trustedBotLogins = new Set(trustedBotEntries.filter((e) => !/^\d+$/.test(e)).map((e) => e.toLowerCase()));
+  const prUser = payload.pull_request && payload.pull_request.user;
+  const prAuthor = prUser && prUser.login;
+  const prAuthorId = prUser && String(prUser.id || '');
+  const isTrusted = (prAuthorId && trustedBotIds.has(prAuthorId)) ||
+    (prAuthor && trustedBotLogins.has(prAuthor.toLowerCase()));
+  if (isTrusted) {
+    let downgraded = 0;
+    for (const f of findings) {
+      if (f.severity !== 'critical' && f.category !== 'campaign-ioc' && TRUSTED_DOWNGRADE_RULES.has(f.ruleId)) {
+        f.originalSeverity = f.severity;
+        f.severity = 'low';
+        downgraded++;
+      }
+    }
+    if (downgraded) {
+      process.stdout.write(
+        `::notice::miasma-detect: PR author @${prAuthor} is a trusted bot — ` +
+          `downgraded ${downgraded} structural finding(s) to low.\n`
+      );
+    }
+  }
+
   const summary = summarize(findings, options);
   summary.findings.forEach(annotate);
 

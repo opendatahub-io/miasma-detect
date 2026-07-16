@@ -630,5 +630,68 @@ test('hook allows (exit 0) benign tool_response', () => {
   });
 });
 
+// === Trusted-bots downgrade logic =========================================
+test('trusted-bot downgrade: SC-WORKFLOW-ADDED goes to low', () => {
+  const { scanChangedFilename } = require('../index');
+  const findings = scanChangedFilename('.github/workflows/ci.yml');
+  assert(findings.some((f) => f.ruleId === 'SC-WORKFLOW-ADDED'));
+  // Simulate trusted-bot downgrade (same logic as action.js)
+  const TRUSTED_DOWNGRADE_RULES = new Set([
+    'SC-WORKFLOW-ADDED', 'PI-UNICODE-TRICKERY', 'SC-COLLAPSED-DIFF',
+  ]);
+  for (const f of findings) {
+    if (f.severity !== 'critical' && f.category !== 'campaign-ioc' && TRUSTED_DOWNGRADE_RULES.has(f.ruleId)) {
+      f.originalSeverity = f.severity;
+      f.severity = 'low';
+    }
+  }
+  assert(summarize(findings, { minSeverity: 'medium' }).ok, 'downgraded findings should not block');
+});
+
+test('trusted-bot downgrade: PI-UNICODE-TRICKERY goes to low', () => {
+  const findings = scanText('normal ‮hidden‬ text', 't');
+  assert(findings.some((f) => f.ruleId === 'PI-UNICODE-TRICKERY'));
+  const TRUSTED_DOWNGRADE_RULES = new Set([
+    'SC-WORKFLOW-ADDED', 'PI-UNICODE-TRICKERY', 'SC-COLLAPSED-DIFF',
+  ]);
+  for (const f of findings) {
+    if (f.severity !== 'critical' && f.category !== 'campaign-ioc' && TRUSTED_DOWNGRADE_RULES.has(f.ruleId)) {
+      f.originalSeverity = f.severity;
+      f.severity = 'low';
+    }
+  }
+  assert(summarize(findings, { minSeverity: 'medium' }).ok, 'downgraded PI-UNICODE should not block');
+});
+
+test('trusted-bot downgrade does NOT affect campaign IOCs', () => {
+  const findings = scanText('Miasma: The Spreading Blight', 't');
+  assert(findings.some((f) => f.ruleId === 'MIASMA-MARKER'));
+  const TRUSTED_DOWNGRADE_RULES = new Set([
+    'SC-WORKFLOW-ADDED', 'PI-UNICODE-TRICKERY', 'SC-COLLAPSED-DIFF',
+  ]);
+  for (const f of findings) {
+    if (f.severity !== 'critical' && f.category !== 'campaign-ioc' && TRUSTED_DOWNGRADE_RULES.has(f.ruleId)) {
+      f.originalSeverity = f.severity;
+      f.severity = 'low';
+    }
+  }
+  assert(!summarize(findings, { minSeverity: 'medium' }).ok, 'campaign IOCs must still block');
+});
+
+test('trusted-bot downgrade does NOT affect critical findings', () => {
+  const findings = scanText('{"hooks":{"command": "node .claude/setup.mjs"}}', 't');
+  assert(findings.some((f) => f.severity === 'critical'));
+  const TRUSTED_DOWNGRADE_RULES = new Set([
+    'SC-WORKFLOW-ADDED', 'PI-UNICODE-TRICKERY', 'SC-COLLAPSED-DIFF',
+  ]);
+  for (const f of findings) {
+    if (f.severity !== 'critical' && f.category !== 'campaign-ioc' && TRUSTED_DOWNGRADE_RULES.has(f.ruleId)) {
+      f.originalSeverity = f.severity;
+      f.severity = 'low';
+    }
+  }
+  assert(!summarize(findings).ok, 'critical findings must still block even for trusted bots');
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${passed} test(s) passed${process.exitCode ? ', with failures' : ''}`);

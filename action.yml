@@ -46,6 +46,17 @@ inputs:
     description: 'Highest finding severity a sign-off can waive. Critical findings (confirmed IOCs) can never be waived when this is at its default.'
     required: false
     default: 'high'
+  trusted-bots:
+    description: >-
+      Newline-separated GitHub usernames or numeric user IDs whose PRs get
+      structural findings (SC-WORKFLOW-ADDED, PI-UNICODE-TRICKERY, SC-COLLAPSED-DIFF)
+      downgraded to "low" so they fall below the default medium threshold.
+      Numeric entries match user.id (immutable), text entries match user.login
+      (case-insensitive). Campaign IOCs and critical findings still block.
+      This prevents verified bots from needing /miasma-approve on every
+      dependency bump.
+    required: false
+    default: ''
   pr-comment:
     description: 'Post/update a report comment on the PR or issue explaining findings, required human intervention, and how to unblock (needs pull-requests: write, which also covers issue comments)'
     required: false
