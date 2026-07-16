@@ -1,4 +1,4 @@
-name: Auto-merge Dependabot PRs
+name: Auto-approve Dependabot PRs
 
 on:
   pull_request:
@@ -7,11 +7,10 @@ on:
 permissions: {}
 
 jobs:
-  auto-merge:
+  auto-approve:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
       pull-requests: write
     steps:
       - name: Fetch Dependabot metadata
@@ -20,11 +19,11 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Approve and enable auto-merge for patch/minor updates
+      - name: Approve and label patch/minor updates
         if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           gh pr review "$PR_NUMBER" --approve
-          gh pr merge "$PR_NUMBER" --auto --squash
+          gh pr edit "$PR_NUMBER" --add-label lgtm
