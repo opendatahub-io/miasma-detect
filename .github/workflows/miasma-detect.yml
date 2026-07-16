@@ -54,8 +54,12 @@ jobs:
           large-diff-lines: '1000'
           scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
           pr-comment: 'true'
+          trusted-bots: |
+            dependabot[bot]
+            renovate[bot]
           exclude: |
             .miasma-scanner/
+            .github/workflows/miasma-detect.yml
             README.md
             SECURITY.md
             action.yml
