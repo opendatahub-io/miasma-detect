@@ -9,6 +9,7 @@ const {
   scanEvent,
   summarize,
   loadPacks,
+  lineRange,
   SEVERITY_ORDER,
 } = require('./scanner');
 const { campaigns } = require('./rules');
@@ -127,7 +128,7 @@ function printHuman(summary, quiet) {
     process.stdout.write(
       `${c}[${f.severity.toUpperCase()}]${r} ${f.ruleId} (${f.category})\n` +
         `  ${f.description}\n` +
-        `  source: ${f.source}\n` +
+        `  source: ${f.source}${lineRange(f) ? ':' + lineRange(f) : ''}\n` +
         (f.match ? `  match:  ${f.match}\n` : '') +
         (f.excerpt ? `  context: …${f.excerpt}…\n` : '')
     );
