@@ -65,7 +65,7 @@ jobs:
       PR: ${{ github.event.pull_request.number }}
       GATE_LABEL: ${{ inputs.gate-label }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v5 (Node 24)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         with:
           fetch-depth: 0
@@ -85,7 +85,7 @@ jobs:
       # NOTE: keep this action pin in sync with the SHA the stubs pin this
       # reusable workflow to — both live in this repo and move together.
       - name: Miasma detect
-        uses: opendatahub-io/miasma-detect@PINNED_ACTION_SHA
+        uses: opendatahub-io/miasma-detect@7906347b7e0bd4445046d89ba8757915abeb009a
         with:
           min-severity: ${{ inputs.min-severity }}
           large-diff-lines: ${{ inputs.large-diff-lines }}
