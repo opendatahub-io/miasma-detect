@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { scanGithubEvent, scanFile, scanChangedFilename, summarize, canWaive, loadPacks, compileExcludes, isExcluded } = require('./scanner');
+const { scanGithubEvent, scanFile, scanChangedFilename, summarize, canWaive, loadPacks, compileExcludes, isExcluded, lineRange } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
 
 const AUTHORIZED = ['OWNER', 'MEMBER', 'COLLABORATOR'];
@@ -147,8 +147,20 @@ function setOutput(name, value) {
 
 function annotate(f) {
   const level = f.severity === 'critical' || f.severity === 'high' ? 'error' : 'warning';
-  const msg = `[${f.ruleId}] ${f.description} (source: ${f.source})`;
-  process.stdout.write(`::${level}::${msg.replace(/\n/g, ' ')}\n`);
+  const lr = lineRange(f);
+  const where = `${f.source}${lr ? ':' + lr : ''}`;
+  const msg = `[${f.ruleId}] ${f.description} (source: ${where})`;
+  // Emit file=/line=/endLine= params for file-based findings so the annotation
+  // highlights the full span inline on the PR's Files-changed view (GitHub
+  // ignores unknown paths).
+  const params = [];
+  if (f.file) params.push(`file=${f.file}`);
+  if (f.file && f.line) {
+    params.push(`line=${f.line}`);
+    if (f.endLine && f.endLine > f.line) params.push(`endLine=${f.endLine}`);
+  }
+  const paramStr = params.length ? ' ' + params.join(',') : '';
+  process.stdout.write(`::${level}${paramStr}::${msg.replace(/\n/g, ' ')}\n`);
 }
 
 function changedFileStats() {

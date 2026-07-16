@@ -48,6 +48,20 @@ function excerpt(text, index, len) {
   return text.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
+/** Display a finding's location as "line" or "line-endLine" (empty if none). */
+function lineRange(f) {
+  if (!f || !f.line) return '';
+  return f.endLine && f.endLine > f.line ? `${f.line}-${f.endLine}` : `${f.line}`;
+}
+
+/** 1-based line number of a character offset within text. */
+function lineAt(text, index) {
+  let line = 1;
+  const stop = Math.min(index, text.length);
+  for (let i = 0; i < stop; i++) if (text.charCodeAt(i) === 10) line++;
+  return line;
+}
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -67,6 +81,8 @@ function scanText(text, source, options) {
         makeFinding(rule, source, {
           match: m[0].slice(0, 200),
           excerpt: excerpt(text, m.index, m[0].length),
+          line: lineAt(text, m.index),
+          endLine: lineAt(text, m.index + m[0].length),
           campaign: rule.campaign,
         })
       );
@@ -81,7 +97,8 @@ function scanText(text, source, options) {
         const re = new RegExp(
           escapeRegExp(pkg) + '["\'@\\s:]{0,4}[\\^~]?' + escapeRegExp(v) + '(?![\\d.])'
         );
-        if (re.test(text)) {
+        const pm = re.exec(text);
+        if (pm) {
           findings.push({
             ruleId: 'KNOWN-COMPROMISED-PKG',
             severity: 'critical',
@@ -89,6 +106,8 @@ function scanText(text, source, options) {
             description: `Reference to known-compromised package ${pkg}@${v} (Shai-Hulud/Miasma family)`,
             source,
             match: `${pkg}@${v}`,
+            line: lineAt(text, pm.index),
+            endLine: lineAt(text, pm.index + pm[0].length),
           });
         }
       }
@@ -241,6 +260,8 @@ function scanFile(filePath, options) {
   }
 
   findings.push(...scanText(text, filePath, opts));
+  // Mark every finding as file-based so CI can emit inline file/line annotations.
+  for (const f of findings) if (f.file === undefined) f.file = filePath;
   return findings;
 }
 
@@ -522,6 +543,7 @@ module.exports = {
   loadPacks,
   compileExcludes,
   isExcluded,
+  lineRange,
   SEVERITY_ORDER,
   DEFAULT_OPTIONS,
 };
