@@ -1,0 +1,107 @@
+name: Tide
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [labeled, unlabeled, synchronize]
+  check_suite:
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  revoke-lgtm-on-push:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove lgtm on new commits (requires re-approval)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label lgtm 2>/dev/null || true
+
+  label-on-approval:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Add lgtm label on approval from authorized reviewer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEWER: ${{ github.event.review.user.login }}
+        run: |
+          PERM=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$REVIEWER/permission" \
+            --jq '.permission' 2>/dev/null || echo "none")
+
+          case "$PERM" in
+            admin|maintain|write)
+              echo "Reviewer @$REVIEWER has $PERM access, adding lgtm"
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label lgtm
+              ;;
+            *)
+              echo "Reviewer @$REVIEWER has $PERM access, lgtm requires write or higher"
+              ;;
+          esac
+
+  auto-merge:
+    if: >-
+      github.event_name == 'check_suite' ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled') ||
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    steps:
+      - name: Merge if lgtm + all checks pass + no hold
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_SUITE_HEAD_SHA: ${{ github.event.check_suite.head_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "check_suite" ]; then
+            PRS=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=50" \
+              --jq "[.[] | select(.head.sha == \"$CHECK_SUITE_HEAD_SHA\") | .number]")
+          else
+            PRS="[$PR_NUMBER]"
+          fi
+
+          for PR in $(echo "$PRS" | jq -r '.[]'); do
+            echo "Checking PR #$PR"
+
+            LABELS=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+
+            if ! echo "$LABELS" | grep -qx "lgtm"; then
+              echo "  Missing lgtm label, skipping"
+              continue
+            fi
+
+            if echo "$LABELS" | grep -qx "do-not-merge/hold"; then
+              echo "  Has do-not-merge/hold label, skipping"
+              continue
+            fi
+
+            STATUS=$(gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --required \
+              --json state --jq 'if length == 0 then "no-checks" elif all(.state == "SUCCESS") then "pass" else "pending" end')
+
+            if [ "$STATUS" != "pass" ]; then
+              echo "  Required checks not all passing ($STATUS), skipping"
+              continue
+            fi
+
+            echo "  All conditions met, merging PR #$PR"
+            if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
+              echo "  ::warning::Merge failed for PR #$PR (conflict, branch protection, or API error)"
+            fi
+          done
