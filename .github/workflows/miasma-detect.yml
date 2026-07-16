@@ -53,7 +53,13 @@ jobs:
           min-severity: medium
           large-diff-lines: '1000'
           scan-changed-files: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          # Direct posting still handles issues + same-repo PRs (they have a
+          # write token). Fork PRs get a read-only token, so the action skips
+          # the post and instead writes the report artifact below; the
+          # companion workflow (miasma-comment.yml) posts it. Companion is
+          # gated to fork PRs only, so no double comment.
           pr-comment: 'true'
+          report-artifact-dir: miasma-report
           trusted-bots: |
             dependabot[bot]
             renovate[bot]
@@ -72,3 +78,14 @@ jobs:
             src/rules.js
             src/scanner.js
             test/test.js
+
+      # Upload the report so the fork-safe companion (miasma-comment.yml) can
+      # post it on fork PRs, where this run's token is read-only. Runs even
+      # when the scan fails; only meaningful on PR events.
+      - name: Upload report artifact
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: miasma-report
+          path: miasma-report/
+          if-no-files-found: ignore

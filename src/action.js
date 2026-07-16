@@ -7,6 +7,7 @@
  */
 
 const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const { scanGithubEvent, scanFile, scanChangedFilename, summarize, canWaive, loadPacks, compileExcludes, isExcluded, lineRange } = require('./scanner');
 const { buildReport, buildResolved, MARKER } = require('./report');
@@ -19,6 +20,20 @@ function prNumberFrom(payload) {
     (payload.issue && payload.issue.pull_request && payload.issue.number) ||
     null
   );
+}
+
+/**
+ * True when the PR originates from a fork (head repo differs from base repo).
+ * GitHub grants such workflow runs a read-only GITHUB_TOKEN, so write calls
+ * (comments, labels) will 403 regardless of the workflow's permissions block.
+ */
+function isForkPr(payload) {
+  const pr = payload && payload.pull_request;
+  if (!pr || !pr.head || !pr.base) return false;
+  const head = pr.head.repo && pr.head.repo.full_name;
+  const base = pr.base.repo && pr.base.repo.full_name;
+  if (head && base) return head !== base;
+  return !!(pr.head.repo && pr.head.repo.fork);
 }
 
 /**
@@ -78,6 +93,46 @@ async function gh(token, method, url, body) {
   return res.status === 204 ? null : res.json();
 }
 
+/** Build the report context (run URL, sign-off text, pr/issue kind). */
+function reportCtx(payload, waivedBy) {
+  const prNumber = prNumberFrom(payload);
+  const runUrl = process.env.GITHUB_RUN_ID
+    ? `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : null;
+  const signoffCmd = input('signoff-command', '/miasma-approve');
+  return {
+    platform: 'github',
+    runUrl,
+    waivedBy,
+    kind: prNumber ? 'pr' : 'issue',
+    signoff:
+      prNumber && signoffCmd
+        ? `After reviewing the findings above, a maintainer (write/admin) comments \`${signoffCmd}\` to acknowledge them and unblock — the check re-runs and passes. Approvals from before the latest commit don't count, and critical findings can never be waived this way.`
+        : null,
+  };
+}
+
+/**
+ * Write the rendered report + metadata to a directory for the fork-safe
+ * `workflow_run` companion to pick up as an artifact. This is the only way to
+ * comment on fork PRs: the scan runs with a read-only token, uploads this, and
+ * a separate workflow_run job (base-repo write token, no fork code executed)
+ * posts it. See examples/fork-safe-*.yml.
+ */
+function writeReportArtifact(payload, summary, waivedBy, dir) {
+  const number =
+    prNumberFrom(payload) ||
+    (payload.issue && !payload.issue.pull_request ? payload.issue.number : null);
+  if (!number) return; // nothing to comment on
+  const ctx = reportCtx(payload, waivedBy);
+  const state = waivedBy ? 'waived' : summary.ok ? 'clean' : 'blocked';
+  const body = state === 'clean' ? buildResolved(ctx) : buildReport(summary, ctx);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'report.md'), body);
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ number, kind: ctx.kind, state }));
+  process.stdout.write(`::notice::miasma-detect: wrote report artifact (${state}) for #${number} → ${dir}\n`);
+}
+
 /**
  * Upsert the report comment on the PR or plain issue (one comment, updated
  * in place). For plain issues, a clean verdict only rewrites the report to
@@ -101,20 +156,7 @@ async function upsertReportComment(payload, summary, options, waivedBy) {
   }
   const api = process.env.GITHUB_API_URL || 'https://api.github.com';
   const base = `${api}/repos/${process.env.GITHUB_REPOSITORY}`;
-  const runUrl = process.env.GITHUB_RUN_ID
-    ? `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-    : null;
-  const signoffCmd = input('signoff-command', '/miasma-approve');
-  const ctx = {
-    platform: 'github',
-    runUrl,
-    waivedBy,
-    kind: prNumber ? 'pr' : 'issue',
-    signoff:
-      prNumber && signoffCmd
-        ? `After reviewing the findings above, a maintainer (write/admin) comments \`${signoffCmd}\` to acknowledge them and unblock — the check re-runs and passes. Approvals from before the latest commit don't count, and critical findings can never be waived this way.`
-        : null,
-  };
+  const ctx = reportCtx(payload, waivedBy);
 
   const comments = await gh(token, 'GET', `${base}/issues/${targetNumber}/comments?per_page=100`);
   const existing = comments.find((c) => c.body && c.body.includes(MARKER));
@@ -360,10 +402,35 @@ async function main() {
   // write when blocked — the payload carries the issue body + the new
   // comment, which is the content in question.
   if (input('pr-comment', 'true') === 'true' && !(isCommentEvent && prNumber)) {
+    if (isForkPr(payload)) {
+      // Fork PRs get a read-only GITHUB_TOKEN, so a comment POST would 403.
+      // Skip the doomed call and explain instead of surfacing a raw error.
+      process.stdout.write(
+        '::notice::miasma-detect: report comment skipped — this PR is from a fork, which GitHub ' +
+          'grants a read-only token. The findings are in the annotations above and the failed check; ' +
+          'a maintainer can still comment the sign-off command to waive them.\n'
+      );
+    } else {
+      try {
+        await upsertReportComment(payload, summary, options, waivedBy);
+      } catch (e) {
+        const hint = /\b403\b/.test(e.message)
+          ? ' — a 403 usually means a read-only token (e.g. a fork PR or missing pull-requests/issues: write); the findings are in the annotations above'
+          : '';
+        process.stdout.write(`::notice::miasma-detect: could not post report comment (${e.message})${hint}\n`);
+      }
+    }
+  }
+
+  // Fork-safe pattern: write the report as an artifact for the workflow_run
+  // companion to post with a write-capable token (works on fork PRs, where
+  // this run's token is read-only). Independent of the direct-post path above.
+  const artifactDir = input('report-artifact-dir', '');
+  if (artifactDir) {
     try {
-      await upsertReportComment(payload, summary, options, waivedBy);
+      writeReportArtifact(payload, summary, waivedBy, artifactDir);
     } catch (e) {
-      process.stdout.write(`::notice::miasma-detect: could not post report comment (${e.message})\n`);
+      process.stdout.write(`::notice::miasma-detect: could not write report artifact (${e.message})\n`);
     }
   }
 

@@ -1,0 +1,50 @@
+# Fork-safe scan (1 of 2). Copy to .github/workflows/miasma-detect.yml.
+#
+# A fork PR gets a READ-ONLY token (GitHub's fork-PR security default), so the
+# scan can't comment on it. It keeps posting directly for issues and same-repo
+# PRs (which have a write token), and ALSO writes the report to an artifact so
+# the companion workflow (examples/fork-safe-comment.yml, on workflow_run) can
+# post it on fork PRs with a write-capable token WITHOUT executing fork code.
+# Do NOT use pull_request_target (secret-exfiltration vector).
+#
+# pr-comment stays 'true': the action auto-skips the direct post on fork PRs,
+# and the companion is gated to fork PRs only, so there's never a double
+# comment. The scan always fails the check and emits inline annotations.
+
+name: miasma-detect          # the companion matches this name in workflow_run
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write       # direct comments on same-repo PRs (fork PRs stay read-only)
+  issues: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Miasma detect
+        uses: opendatahub-io/miasma-detect@<full-commit-SHA>
+        with:
+          min-severity: medium
+          pr-comment: 'true'                  # direct post for issues + same-repo PRs
+          report-artifact-dir: miasma-report  # + artifact for the fork-PR companion
+
+      # Always upload (even on clean/failed scans) so the companion can post
+      # or mark-resolved. if: always() keeps it running when the scan fails.
+      - name: Upload report artifact
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: miasma-report
+          path: miasma-report/
+          if-no-files-found: ignore

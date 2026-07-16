@@ -1,0 +1,47 @@
+# Fork-safe comment (2 of 2). Copy to .github/workflows/miasma-comment.yml.
+#
+# Triggered when the scan workflow completes (workflow_run). This runs in the
+# BASE repo context with a write-capable token and does NOT check out or execute
+# any fork code — it only downloads the trusted artifact the scan produced and
+# posts it. That's what makes commenting on fork PRs safe.
+#
+# WHY this is needed: a scan triggered by a fork PR gets a read-only token and
+# no secrets, so it can't comment. workflow_run runs afterward with normal
+# permissions but is decoupled from the untrusted PR code.
+
+name: miasma-detect comment
+
+on:
+  workflow_run:
+    workflows: ["miasma-detect"]   # MUST match the scan workflow's `name:`
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write   # post the report comment
+  issues: write
+  actions: read          # download the artifact from the triggering run
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    # Only fork PRs — same-repo PRs were already commented by the scan directly,
+    # so this avoids a double comment.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.event.workflow_run.repository.full_name
+    steps:
+      - name: Download report artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: miasma-report
+          path: miasma-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+        continue-on-error: true   # no artifact (e.g. push run) → nothing to post
+
+      - name: Post report comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: npx --yes --package=miasma-detect miasma-detect-post-report miasma-report

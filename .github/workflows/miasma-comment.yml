@@ -1,0 +1,51 @@
+# Fork-safe report comment for the self-scan.
+#
+# The self-scan (miasma-detect.yml) posts its report directly for issues and
+# same-repo PRs (which have a write token). Fork PRs get a read-only token, so
+# the scan can only UPLOAD the report as an artifact. This companion runs on
+# workflow_run — in the base-repo context with a write token, and WITHOUT
+# checking out or executing any fork code — to post that report.
+#
+# Gated to fork PRs only, so same-repo PRs (already commented directly by the
+# scan) don't get a second comment. Do NOT convert this to pull_request_target.
+
+name: miasma-comment
+
+on:
+  workflow_run:
+    workflows: ["miasma-detect"]   # matches the scan workflow's `name:`
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read          # download the artifact from the triggering run
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    # Only fork PRs: same-repo PRs were already commented by the scan directly.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.event.workflow_run.repository.full_name
+    steps:
+      # Check out MAIN (trusted) to get src/post-report.js — never the fork PR.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+
+      - name: Download report artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: miasma-report
+          path: miasma-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+        continue-on-error: true   # no artifact → nothing to post
+
+      - name: Post report comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node src/post-report.js miasma-report

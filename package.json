@@ -15,7 +15,8 @@
   "main": "index.js",
   "bin": {
     "miasma-detect": "src/cli.js",
-    "miasma-detect-gitlab-ci": "src/gitlab-ci.js"
+    "miasma-detect-gitlab-ci": "src/gitlab-ci.js",
+    "miasma-detect-post-report": "src/post-report.js"
   },
   "files": [
     "index.js",
